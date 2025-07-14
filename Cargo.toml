@@ -1,0 +1,21 @@
+[package]
+name = "chatdelta"
+version = "0.1.0"
+edition = "2021"
+description = "A unified Rust library for connecting to multiple AI APIs (OpenAI, Google Gemini, Anthropic Claude)"
+license = "MIT"
+repository = "https://github.com/ChatDelta/chatdelta"
+keywords = ["ai", "openai", "gemini", "claude", "api"]
+categories = ["api-bindings", "web-programming::http-client"]
+
+[lib]
+name = "chatdelta"
+path = "src/lib.rs"
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
