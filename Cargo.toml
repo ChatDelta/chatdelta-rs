@@ -2,9 +2,13 @@
 name = "chatdelta"
 version = "0.1.0"
 edition = "2021"
+authors = ["ChatDelta Contributors"]
 description = "A unified Rust library for connecting to multiple AI APIs (OpenAI, Google Gemini, Anthropic Claude)"
 license = "MIT"
-repository = "https://github.com/ChatDelta/chatdelta"
+repository = "https://github.com/ChatDelta/chatdelta-rs"
+homepage = "https://github.com/ChatDelta/chatdelta-rs"
+documentation = "https://docs.rs/chatdelta"
+readme = "README.md"
 keywords = ["ai", "openai", "gemini", "claude", "api"]
 categories = ["api-bindings", "web-programming::http-client"]
 

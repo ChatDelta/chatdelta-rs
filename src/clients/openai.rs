@@ -36,7 +36,7 @@ impl AiClient for ChatGpt {
             role: &'a str,
             content: &'a str,
         }
-        
+
         #[derive(Serialize)]
         struct Request<'a> {
             model: &'a str,
@@ -44,17 +44,17 @@ impl AiClient for ChatGpt {
             #[serde(skip_serializing_if = "Option::is_none")]
             temperature: Option<f32>,
         }
-        
+
         #[derive(Deserialize)]
         struct Response {
             choices: Vec<Choice>,
         }
-        
+
         #[derive(Deserialize)]
         struct Choice {
             message: RespMessage,
         }
-        
+
         #[derive(Deserialize)]
         struct RespMessage {
             content: String,
@@ -79,21 +79,19 @@ impl AiClient for ChatGpt {
                 .send()
                 .await
             {
-                Ok(response) => {
-                    match response.json::<Response>().await {
-                        Ok(resp) => {
-                            return Ok(resp
-                                .choices
-                                .first()
-                                .map(|c| c.message.content.clone())
-                                .unwrap_or_else(|| "No response from ChatGPT".to_string()));
-                        }
-                        Err(e) => last_error = Some(ClientError::from(e)),
+                Ok(response) => match response.json::<Response>().await {
+                    Ok(resp) => {
+                        return Ok(resp
+                            .choices
+                            .first()
+                            .map(|c| c.message.content.clone())
+                            .unwrap_or_else(|| "No response from ChatGPT".to_string()));
                     }
-                }
+                    Err(e) => last_error = Some(ClientError::from(e)),
+                },
                 Err(e) => last_error = Some(ClientError::from(e)),
             }
-            
+
             if attempt < self.retries {
                 tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1) as u64)).await;
             }

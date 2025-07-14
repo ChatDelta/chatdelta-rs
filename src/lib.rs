@@ -1,14 +1,14 @@
 //! # ChatDelta AI Client Library
-//! 
+//!
 //! A Rust library for connecting to multiple AI APIs (OpenAI, Google Gemini, Anthropic Claude)
 //! with a unified interface. Supports parallel execution, retry logic, and configurable parameters.
-//! 
+//!
 //! ## Example
-//! 
+//!
 //! ```rust,no_run
 //! use chatdelta::{AiClient, ClientConfig, create_client};
 //! use std::time::Duration;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let config = ClientConfig {
@@ -65,15 +65,33 @@ impl Default for ClientConfig {
 pub trait AiClient: Send + Sync {
     /// Sends a prompt and returns the textual response
     async fn send_prompt(&self, prompt: &str) -> Result<String, ClientError>;
-    
+
     /// Returns the name/identifier of this AI client
     fn name(&self) -> &str;
-    
+
     /// Returns the model being used by this client
     fn model(&self) -> &str;
 }
 
 /// Factory function to create AI clients
+///
+/// # Arguments
+///
+/// * `provider` - The AI provider: "openai", "google"/"gemini", or "anthropic"/"claude"
+/// * `api_key` - The API key for the provider
+/// * `model` - The model name (e.g., "gpt-4", "claude-3-sonnet-20240229", "gemini-1.5-pro")
+/// * `config` - Configuration for timeouts, retries, and generation parameters
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use chatdelta::{create_client, ClientConfig};
+/// use std::time::Duration;
+///
+/// let config = ClientConfig::default();
+/// let client = create_client("openai", "your-api-key", "gpt-4", config)?;
+/// # Ok::<(), chatdelta::ClientError>(())
+/// ```
 pub fn create_client(
     provider: &str,
     api_key: &str,
@@ -112,25 +130,93 @@ pub fn create_client(
 }
 
 /// Execute multiple AI clients in parallel and return all results
+///
+/// This function runs all provided clients concurrently and returns the results
+/// in the order they complete, not necessarily the order they were provided.
+///
+/// # Arguments
+///
+/// * `clients` - Vector of AI clients to execute
+/// * `prompt` - The prompt to send to all clients
+///
+/// # Returns
+///
+/// A vector of tuples containing the client name and either the response or an error
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use chatdelta::{create_client, execute_parallel, ClientConfig};
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = ClientConfig::default();
+/// let clients = vec![
+///     create_client("openai", "key1", "gpt-4", config.clone())?,
+///     create_client("anthropic", "key2", "claude-3-sonnet-20240229", config)?,
+/// ];
+///
+/// let results = execute_parallel(clients, "Hello, world!").await;
+/// for (name, result) in results {
+///     match result {
+///         Ok(response) => println!("{}: {}", name, response),
+///         Err(e) => eprintln!("{} failed: {}", name, e),
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
 pub async fn execute_parallel(
     clients: Vec<Box<dyn AiClient>>,
     prompt: &str,
 ) -> Vec<(String, Result<String, ClientError>)> {
     use futures::future;
-    
-    let futures: Vec<_> = clients.iter().map(|client| {
-        let name = client.name().to_string();
-        let prompt = prompt.to_string();
-        async move {
-            let result = client.send_prompt(&prompt).await;
-            (name, result)
-        }
-    }).collect();
-    
+
+    let futures: Vec<_> = clients
+        .iter()
+        .map(|client| {
+            let name = client.name().to_string();
+            let prompt = prompt.to_string();
+            async move {
+                let result = client.send_prompt(&prompt).await;
+                (name, result)
+            }
+        })
+        .collect();
+
     future::join_all(futures).await
 }
 
 /// Generate a summary using one of the provided clients
+///
+/// Takes the responses from multiple AI models and uses another AI client
+/// to generate a summary highlighting key differences and commonalities.
+///
+/// # Arguments
+///
+/// * `client` - The AI client to use for generating the summary
+/// * `responses` - Vector of tuples containing (model_name, response) pairs
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use chatdelta::{create_client, generate_summary, ClientConfig};
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = ClientConfig::default();
+/// let summarizer = create_client("openai", "your-key", "gpt-4", config)?;
+///
+/// let responses = vec![
+///     ("GPT-4".to_string(), "Response from GPT-4...".to_string()),
+///     ("Claude".to_string(), "Response from Claude...".to_string()),
+/// ];
+///
+/// let summary = generate_summary(&*summarizer, &responses).await?;
+/// println!("Summary: {}", summary);
+/// # Ok(())
+/// # }
+/// ```
 pub async fn generate_summary(
     client: &dyn AiClient,
     responses: &[(String, String)],
@@ -140,7 +226,7 @@ pub async fn generate_summary(
         summary_prompt.push_str(&format!("{}:\n{}\n---\n", name, response));
     }
     summary_prompt.push_str("Summarize the key differences and commonalities.");
-    
+
     client.send_prompt(&summary_prompt).await
 }
 
@@ -198,8 +284,14 @@ mod tests {
     #[tokio::test]
     async fn test_execute_parallel() {
         let clients: Vec<Box<dyn AiClient>> = vec![
-            Box::new(MockClient::new("client1", vec![Ok("response1".to_string())])),
-            Box::new(MockClient::new("client2", vec![Ok("response2".to_string())])),
+            Box::new(MockClient::new(
+                "client1",
+                vec![Ok("response1".to_string())],
+            )),
+            Box::new(MockClient::new(
+                "client2",
+                vec![Ok("response2".to_string())],
+            )),
         ];
 
         let results = execute_parallel(clients, "test prompt").await;

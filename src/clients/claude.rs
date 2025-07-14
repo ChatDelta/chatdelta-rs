@@ -38,7 +38,7 @@ impl AiClient for Claude {
             role: &'a str,
             content: &'a str,
         }
-        
+
         #[derive(Serialize)]
         struct Request<'a> {
             model: &'a str,
@@ -47,12 +47,12 @@ impl AiClient for Claude {
             #[serde(skip_serializing_if = "Option::is_none")]
             temperature: Option<f32>,
         }
-        
+
         #[derive(Deserialize)]
         struct Response {
             content: Vec<ContentBlock>,
         }
-        
+
         #[derive(Deserialize)]
         struct ContentBlock {
             text: String,
@@ -80,21 +80,19 @@ impl AiClient for Claude {
                 .send()
                 .await
             {
-                Ok(response) => {
-                    match response.json::<Response>().await {
-                        Ok(resp) => {
-                            return Ok(resp
-                                .content
-                                .first()
-                                .map(|c| c.text.clone())
-                                .unwrap_or_else(|| "No response from Claude".to_string()));
-                        }
-                        Err(e) => last_error = Some(ClientError::from(e)),
+                Ok(response) => match response.json::<Response>().await {
+                    Ok(resp) => {
+                        return Ok(resp
+                            .content
+                            .first()
+                            .map(|c| c.text.clone())
+                            .unwrap_or_else(|| "No response from Claude".to_string()));
                     }
-                }
+                    Err(e) => last_error = Some(ClientError::from(e)),
+                },
                 Err(e) => last_error = Some(ClientError::from(e)),
             }
-            
+
             if attempt < self.retries {
                 tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1) as u64)).await;
             }
