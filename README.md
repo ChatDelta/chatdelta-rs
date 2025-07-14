@@ -123,3 +123,20 @@ The library provides comprehensive error handling through the `ClientError` enum
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+We welcome contributions! To get started, clone the repository and install the Rust toolchain. Before opening a pull request, run the following commands:
+
+```bash
+# Check formatting
+cargo fmt -- --check
+
+# Run the linter
+cargo clippy -- -D warnings
+
+# Execute tests
+cargo test
+```
+
+This project uses GitHub Actions to run the same checks automatically on every pull request.

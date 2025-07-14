@@ -32,9 +32,11 @@ use std::time::Duration;
 
 pub mod clients;
 pub mod error;
+pub mod utils;
 
 pub use clients::*;
 pub use error::*;
+pub use utils::execute_with_retry;
 
 /// Configuration for AI clients
 #[derive(Debug, Clone)]

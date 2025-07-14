@@ -1,17 +1,21 @@
 //! OpenAI ChatGPT client implementation
 
-use crate::{AiClient, ClientConfig, ClientError};
+use crate::{execute_with_retry, AiClient, ClientConfig, ClientError};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 /// Client for OpenAI's ChatGPT models
 pub struct ChatGpt {
+    /// Reqwest HTTP client used for requests
     http: Client,
+    /// API key for authenticating with OpenAI
     key: String,
+    /// Model name to call, e.g. `"gpt-4"`
     model: String,
+    /// Optional temperature parameter controlling response creativity
     temperature: Option<f32>,
+    /// Number of times to retry a failed request
     retries: u32,
 }
 
@@ -69,35 +73,23 @@ impl AiClient for ChatGpt {
             temperature: self.temperature,
         };
 
-        let mut last_error = None;
-        for attempt in 0..=self.retries {
-            match self
+        execute_with_retry(self.retries, || async {
+            let response = self
                 .http
                 .post("https://api.openai.com/v1/chat/completions")
                 .bearer_auth(&self.key)
                 .json(&body)
                 .send()
-                .await
-            {
-                Ok(response) => match response.json::<Response>().await {
-                    Ok(resp) => {
-                        return Ok(resp
-                            .choices
-                            .first()
-                            .map(|c| c.message.content.clone())
-                            .unwrap_or_else(|| "No response from ChatGPT".to_string()));
-                    }
-                    Err(e) => last_error = Some(ClientError::from(e)),
-                },
-                Err(e) => last_error = Some(ClientError::from(e)),
-            }
+                .await?;
 
-            if attempt < self.retries {
-                tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1) as u64)).await;
-            }
-        }
-
-        Err(last_error.unwrap())
+            let resp: Response = response.json().await?;
+            Ok(resp
+                .choices
+                .first()
+                .map(|c| c.message.content.clone())
+                .unwrap_or_else(|| "No response from ChatGPT".to_string()))
+        })
+        .await
     }
 
     fn name(&self) -> &str {

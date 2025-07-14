@@ -1,17 +1,21 @@
 //! Google Gemini client implementation
 
-use crate::{AiClient, ClientConfig, ClientError};
+use crate::{execute_with_retry, AiClient, ClientConfig, ClientError};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 /// Client for Google Gemini models
 pub struct Gemini {
+    /// Reqwest HTTP client used for requests
     http: Client,
+    /// API key for Gemini access
     key: String,
+    /// Model identifier such as `"gemini-1.5-pro"`
     model: String,
+    /// Optional temperature parameter controlling response creativity
     temperature: Option<f32>,
+    /// Number of retry attempts on failure
     retries: u32,
 }
 
@@ -90,29 +94,17 @@ impl AiClient for Gemini {
             self.model, self.key
         );
 
-        let mut last_error = None;
-        for attempt in 0..=self.retries {
-            match self.http.post(&url).json(&body).send().await {
-                Ok(response) => match response.json::<Response>().await {
-                    Ok(resp) => {
-                        return Ok(resp
-                            .candidates
-                            .first()
-                            .and_then(|c| c.content.parts.first())
-                            .map(|p| p.text.clone())
-                            .unwrap_or_else(|| "No response from Gemini".to_string()));
-                    }
-                    Err(e) => last_error = Some(ClientError::from(e)),
-                },
-                Err(e) => last_error = Some(ClientError::from(e)),
-            }
-
-            if attempt < self.retries {
-                tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1) as u64)).await;
-            }
-        }
-
-        Err(last_error.unwrap())
+        execute_with_retry(self.retries, || async {
+            let response = self.http.post(&url).json(&body).send().await?;
+            let resp: Response = response.json().await?;
+            Ok(resp
+                .candidates
+                .first()
+                .and_then(|c| c.content.parts.first())
+                .map(|p| p.text.clone())
+                .unwrap_or_else(|| "No response from Gemini".to_string()))
+        })
+        .await
     }
 
     fn name(&self) -> &str {
