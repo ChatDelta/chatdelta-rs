@@ -20,11 +20,11 @@ pub enum ClientError {
 impl fmt::Display for ClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ClientError::Network(msg) => write!(f, "Network error: {}", msg),
-            ClientError::Api(msg) => write!(f, "API error: {}", msg),
-            ClientError::Authentication(msg) => write!(f, "Authentication error: {}", msg),
-            ClientError::Configuration(msg) => write!(f, "Configuration error: {}", msg),
-            ClientError::Parse(msg) => write!(f, "Parse error: {}", msg),
+            ClientError::Network(msg) => write!(f, "Network error: {msg}"),
+            ClientError::Api(msg) => write!(f, "API error: {msg}"),
+            ClientError::Authentication(msg) => write!(f, "Authentication error: {msg}"),
+            ClientError::Configuration(msg) => write!(f, "Configuration error: {msg}"),
+            ClientError::Parse(msg) => write!(f, "Parse error: {msg}"),
         }
     }
 }
@@ -44,7 +44,7 @@ impl From<reqwest::Error> for ClientError {
             } else if status.as_u16() == 429 {
                 ClientError::Api("Rate limit exceeded".to_string())
             } else {
-                ClientError::Api(format!("HTTP {}: {}", status, err))
+                ClientError::Api(format!("HTTP {status}: {err}"))
             }
         } else {
             ClientError::Network(err.to_string())
@@ -54,6 +54,6 @@ impl From<reqwest::Error> for ClientError {
 
 impl From<serde_json::Error> for ClientError {
     fn from(err: serde_json::Error) -> Self {
-        ClientError::Parse(format!("JSON parsing failed: {}", err))
+        ClientError::Parse(format!("JSON parsing failed: {err}"))
     }
 }

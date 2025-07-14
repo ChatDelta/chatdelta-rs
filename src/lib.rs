@@ -103,7 +103,7 @@ pub fn create_client(
     let http_client = Client::builder()
         .timeout(config.timeout)
         .build()
-        .map_err(|e| ClientError::Configuration(format!("Failed to create HTTP client: {}", e)))?;
+        .map_err(|e| ClientError::Configuration(format!("Failed to create HTTP client: {e}")))?;
 
     match provider.to_lowercase().as_str() {
         "openai" | "gpt" | "chatgpt" => Ok(Box::new(ChatGpt::new(
@@ -125,8 +125,7 @@ pub fn create_client(
             config,
         ))),
         _ => Err(ClientError::Configuration(format!(
-            "Unknown provider: {}. Supported providers: openai, google, anthropic",
-            provider
+            "Unknown provider: {provider}. Supported providers: openai, google, anthropic",
         ))),
     }
 }
@@ -225,7 +224,7 @@ pub async fn generate_summary(
 ) -> Result<String, ClientError> {
     let mut summary_prompt = "Given these AI model responses:\n".to_string();
     for (name, response) in responses {
-        summary_prompt.push_str(&format!("{}:\n{}\n---\n", name, response));
+        summary_prompt.push_str(&format!("{name}:\n{response}\n---\n"));
     }
     summary_prompt.push_str("Summarize the key differences and commonalities.");
 

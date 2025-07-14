@@ -90,8 +90,9 @@ impl AiClient for Gemini {
         };
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-            self.model, self.key
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
+            model = self.model,
+            key = self.key
         );
 
         execute_with_retry(self.retries, || async {
