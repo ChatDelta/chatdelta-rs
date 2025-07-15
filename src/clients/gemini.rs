@@ -42,7 +42,6 @@ impl AiClient for Gemini {
 
         #[derive(Serialize)]
         struct Content<'a> {
-            role: &'a str,
             parts: Vec<Part<'a>>,
         }
 
@@ -61,7 +60,16 @@ impl AiClient for Gemini {
 
         #[derive(Deserialize)]
         struct Response {
+            #[serde(default)]
             candidates: Vec<Candidate>,
+            error: Option<ApiError>,
+        }
+
+        #[derive(Deserialize)]
+        struct ApiError {
+            code: u32,
+            message: String,
+            status: String,
         }
 
         #[derive(Deserialize)]
@@ -81,7 +89,6 @@ impl AiClient for Gemini {
 
         let body = Request {
             contents: vec![Content {
-                role: "user",
                 parts: vec![Part { text: prompt }],
             }],
             generation_config: self.temperature.map(|temp| GenerationConfig {
@@ -90,14 +97,26 @@ impl AiClient for Gemini {
         };
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-            model = self.model,
-            key = self.key
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+            self.model
         );
 
         execute_with_retry(self.retries, || async {
-            let response = self.http.post(&url).json(&body).send().await?;
-            let resp: Response = response.json().await?;
+            let response = self.http
+                .post(&url)
+                .header("X-goog-api-key", &self.key)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await?;
+            
+            let response_text = response.text().await?;
+            let resp: Response = serde_json::from_str(&response_text)?;
+            
+            if let Some(error) = resp.error {
+                return Ok(format!("Gemini API Error ({}): {}", error.code, error.message));
+            }
+            
             Ok(resp
                 .candidates
                 .first()

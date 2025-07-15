@@ -51,7 +51,15 @@ impl AiClient for ChatGpt {
 
         #[derive(Deserialize)]
         struct Response {
-            choices: Vec<Choice>,
+            choices: Option<Vec<Choice>>,
+            error: Option<ErrorInfo>,
+        }
+
+        #[derive(Deserialize)]
+        struct ErrorInfo {
+            message: String,
+            #[serde(rename = "type")]
+            error_type: Option<String>,
         }
 
         #[derive(Deserialize)]
@@ -82,9 +90,29 @@ impl AiClient for ChatGpt {
                 .send()
                 .await?;
 
+            // Check for HTTP error status codes
+            if !response.status().is_success() {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                return Err(ClientError::Api(format!("OpenAI API error {}: {}", status, error_text)));
+            }
+
             let resp: Response = response.json().await?;
-            Ok(resp
-                .choices
+            
+            // Check for error in response body
+            if let Some(error) = resp.error {
+                return Err(ClientError::Api(format!("OpenAI API error: {}", error.message)));
+            }
+            
+            // Check for missing or empty choices
+            let choices = resp.choices.ok_or_else(|| 
+                ClientError::Parse("OpenAI response missing 'choices' field".to_string()))?;
+            
+            if choices.is_empty() {
+                return Err(ClientError::Api("OpenAI returned empty choices array".to_string()));
+            }
+            
+            Ok(choices
                 .first()
                 .map(|c| c.message.content.clone())
                 .unwrap_or_else(|| "No response from ChatGPT".to_string()))
