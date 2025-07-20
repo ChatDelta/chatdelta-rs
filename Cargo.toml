@@ -9,7 +9,7 @@ repository = "https://github.com/ChatDelta/chatdelta-rs"
 homepage = "https://github.com/ChatDelta/chatdelta-rs"
 documentation = "https://docs.rs/chatdelta"
 readme = "README.md"
-keywords = ["ai", "openai", "gemini", "claude", "api", "streaming"]
+keywords = ["ai", "openai", "claude", "api", "streaming"]
 categories = ["api-bindings", "web-programming::http-client"]
 
 [lib]
