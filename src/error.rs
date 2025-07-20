@@ -6,25 +6,170 @@ use std::fmt;
 #[derive(Debug)]
 pub enum ClientError {
     /// Network-related errors (timeouts, connection failures, etc.)
-    Network(String),
+    Network(NetworkError),
     /// API-specific errors (invalid responses, rate limits, etc.)
-    Api(String),
+    Api(ApiError),
     /// Authentication errors (invalid API keys, etc.)
-    Authentication(String),
+    Authentication(AuthError),
     /// Configuration errors (invalid parameters, etc.)
-    Configuration(String),
+    Configuration(ConfigError),
     /// Response parsing errors
-    Parse(String),
+    Parse(ParseError),
+    /// Streaming-related errors
+    Stream(StreamError),
+}
+
+/// Network-related error details
+#[derive(Debug)]
+pub struct NetworkError {
+    pub message: String,
+    pub error_type: NetworkErrorType,
+}
+
+#[derive(Debug)]
+pub enum NetworkErrorType {
+    Timeout,
+    ConnectionFailed,
+    DnsResolution,
+    Other,
+}
+
+/// API-related error details
+#[derive(Debug)]
+pub struct ApiError {
+    pub message: String,
+    pub status_code: Option<u16>,
+    pub error_type: ApiErrorType,
+}
+
+#[derive(Debug)]
+pub enum ApiErrorType {
+    RateLimit,
+    QuotaExceeded,
+    InvalidModel,
+    ContentFilter,
+    ServerError,
+    BadRequest,
+    Other,
+}
+
+/// Authentication error details
+#[derive(Debug)]
+pub struct AuthError {
+    pub message: String,
+    pub error_type: AuthErrorType,
+}
+
+#[derive(Debug)]
+pub enum AuthErrorType {
+    InvalidApiKey,
+    MissingApiKey,
+    ExpiredToken,
+    InsufficientPermissions,
+    Other,
+}
+
+/// Configuration error details
+#[derive(Debug)]
+pub struct ConfigError {
+    pub message: String,
+    pub parameter: Option<String>,
+}
+
+/// Parse error details
+#[derive(Debug)]
+pub struct ParseError {
+    pub message: String,
+    pub error_type: ParseErrorType,
+}
+
+#[derive(Debug)]
+pub enum ParseErrorType {
+    JsonParsing,
+    MissingField,
+    InvalidFormat,
+    Other,
+}
+
+/// Streaming error details
+#[derive(Debug)]
+pub struct StreamError {
+    pub message: String,
+    pub error_type: StreamErrorType,
+}
+
+#[derive(Debug)]
+pub enum StreamErrorType {
+    ConnectionLost,
+    InvalidChunk,
+    StreamClosed,
+    Other,
+}
+
+impl ClientError {
+    /// Create a timeout network error
+    pub fn timeout(message: impl Into<String>) -> Self {
+        Self::Network(NetworkError {
+            message: message.into(),
+            error_type: NetworkErrorType::Timeout,
+        })
+    }
+
+    /// Create a rate limit API error
+    pub fn rate_limit(message: impl Into<String>) -> Self {
+        Self::Api(ApiError {
+            message: message.into(),
+            status_code: Some(429),
+            error_type: ApiErrorType::RateLimit,
+        })
+    }
+
+    /// Create an invalid API key error
+    pub fn invalid_api_key(message: impl Into<String>) -> Self {
+        Self::Authentication(AuthError {
+            message: message.into(),
+            error_type: AuthErrorType::InvalidApiKey,
+        })
+    }
+
+    /// Create a configuration error
+    pub fn config(message: impl Into<String>, parameter: Option<String>) -> Self {
+        Self::Configuration(ConfigError {
+            message: message.into(),
+            parameter,
+        })
+    }
+
+    /// Create a JSON parsing error
+    pub fn json_parse(message: impl Into<String>) -> Self {
+        Self::Parse(ParseError {
+            message: message.into(),
+            error_type: ParseErrorType::JsonParsing,
+        })
+    }
 }
 
 impl fmt::Display for ClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ClientError::Network(msg) => write!(f, "Network error: {msg}"),
-            ClientError::Api(msg) => write!(f, "API error: {msg}"),
-            ClientError::Authentication(msg) => write!(f, "Authentication error: {msg}"),
-            ClientError::Configuration(msg) => write!(f, "Configuration error: {msg}"),
-            ClientError::Parse(msg) => write!(f, "Parse error: {msg}"),
+            ClientError::Network(err) => write!(f, "Network error: {}", err.message),
+            ClientError::Api(err) => {
+                if let Some(status) = err.status_code {
+                    write!(f, "API error ({}): {}", status, err.message)
+                } else {
+                    write!(f, "API error: {}", err.message)
+                }
+            }
+            ClientError::Authentication(err) => write!(f, "Authentication error: {}", err.message),
+            ClientError::Configuration(err) => {
+                if let Some(param) = &err.parameter {
+                    write!(f, "Configuration error ({}): {}", param, err.message)
+                } else {
+                    write!(f, "Configuration error: {}", err.message)
+                }
+            }
+            ClientError::Parse(err) => write!(f, "Parse error: {}", err.message),
+            ClientError::Stream(err) => write!(f, "Stream error: {}", err.message),
         }
     }
 }
@@ -34,26 +179,63 @@ impl std::error::Error for ClientError {}
 impl From<reqwest::Error> for ClientError {
     fn from(err: reqwest::Error) -> Self {
         if err.is_timeout() {
-            ClientError::Network("Request timeout".to_string())
+            ClientError::Network(NetworkError {
+                message: "Request timeout".to_string(),
+                error_type: NetworkErrorType::Timeout,
+            })
         } else if err.is_connect() {
-            ClientError::Network("Connection failed".to_string())
+            ClientError::Network(NetworkError {
+                message: format!("Connection failed: {err}"),
+                error_type: NetworkErrorType::ConnectionFailed,
+            })
         } else if err.status().is_some() {
             let status = err.status().unwrap();
-            if status.as_u16() == 401 {
-                ClientError::Authentication("Invalid API key".to_string())
-            } else if status.as_u16() == 429 {
-                ClientError::Api("Rate limit exceeded".to_string())
+            let status_code = status.as_u16();
+
+            if status_code == 401 {
+                ClientError::Authentication(AuthError {
+                    message: "Invalid API key".to_string(),
+                    error_type: AuthErrorType::InvalidApiKey,
+                })
+            } else if status_code == 429 {
+                ClientError::Api(ApiError {
+                    message: "Rate limit exceeded".to_string(),
+                    status_code: Some(status_code),
+                    error_type: ApiErrorType::RateLimit,
+                })
+            } else if status_code >= 500 {
+                ClientError::Api(ApiError {
+                    message: format!("Server error: {err}"),
+                    status_code: Some(status_code),
+                    error_type: ApiErrorType::ServerError,
+                })
+            } else if status_code >= 400 {
+                ClientError::Api(ApiError {
+                    message: format!("Bad request: {err}"),
+                    status_code: Some(status_code),
+                    error_type: ApiErrorType::BadRequest,
+                })
             } else {
-                ClientError::Api(format!("HTTP {status}: {err}"))
+                ClientError::Api(ApiError {
+                    message: format!("HTTP {status}: {err}"),
+                    status_code: Some(status_code),
+                    error_type: ApiErrorType::Other,
+                })
             }
         } else {
-            ClientError::Network(err.to_string())
+            ClientError::Network(NetworkError {
+                message: err.to_string(),
+                error_type: NetworkErrorType::Other,
+            })
         }
     }
 }
 
 impl From<serde_json::Error> for ClientError {
     fn from(err: serde_json::Error) -> Self {
-        ClientError::Parse(format!("JSON parsing failed: {err}"))
+        ClientError::Parse(ParseError {
+            message: format!("JSON parsing failed: {err}"),
+            error_type: ParseErrorType::JsonParsing,
+        })
     }
 }

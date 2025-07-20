@@ -1,6 +1,9 @@
 //! OpenAI ChatGPT client implementation
 
-use crate::{execute_with_retry, AiClient, ClientConfig, ClientError};
+use crate::{
+    execute_with_retry, AiClient, ApiError, ApiErrorType, ClientConfig, ClientError,
+    ParseError, ParseErrorType,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -13,10 +16,8 @@ pub struct ChatGpt {
     key: String,
     /// Model name to call, e.g. `"gpt-4"`
     model: String,
-    /// Optional temperature parameter controlling response creativity
-    temperature: Option<f32>,
-    /// Number of times to retry a failed request
-    retries: u32,
+    /// Configuration for the client
+    config: ClientConfig,
 }
 
 impl ChatGpt {
@@ -26,8 +27,7 @@ impl ChatGpt {
             http,
             key,
             model,
-            temperature: config.temperature,
-            retries: config.retries,
+            config,
         }
     }
 }
@@ -78,10 +78,10 @@ impl AiClient for ChatGpt {
                 role: "user",
                 content: prompt,
             }],
-            temperature: self.temperature,
+            temperature: self.config.temperature,
         };
 
-        execute_with_retry(self.retries, || async {
+        execute_with_retry(self.config.retries, || async {
             let response = self
                 .http
                 .post("https://api.openai.com/v1/chat/completions")
@@ -92,32 +92,56 @@ impl AiClient for ChatGpt {
 
             // Check for HTTP error status codes
             if !response.status().is_success() {
-                let status = response.status();
-                let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                return Err(ClientError::Api(format!("OpenAI API error {}: {}", status, error_text)));
+                return Err(response.error_for_status().unwrap_err().into());
             }
 
             let resp: Response = response.json().await?;
-            
+
             // Check for error in response body
             if let Some(error) = resp.error {
-                return Err(ClientError::Api(format!("OpenAI API error: {}", error.message)));
+                let error_type = match error.error_type.as_deref() {
+                    Some("insufficient_quota") => ApiErrorType::QuotaExceeded,
+                    Some("model_not_found") => ApiErrorType::InvalidModel,
+                    Some("content_filter") => ApiErrorType::ContentFilter,
+                    _ => ApiErrorType::Other,
+                };
+                return Err(ClientError::Api(ApiError {
+                    message: format!("OpenAI API error: {}", error.message),
+                    status_code: None,
+                    error_type,
+                }));
             }
-            
+
             // Check for missing or empty choices
-            let choices = resp.choices.ok_or_else(|| 
-                ClientError::Parse("OpenAI response missing 'choices' field".to_string()))?;
-            
+            let choices = resp.choices.ok_or_else(|| {
+                ClientError::Parse(ParseError {
+                    message: "OpenAI response missing 'choices' field".to_string(),
+                    error_type: ParseErrorType::MissingField,
+                })
+            })?;
+
             if choices.is_empty() {
-                return Err(ClientError::Api("OpenAI returned empty choices array".to_string()));
+                return Err(ClientError::Api(ApiError {
+                    message: "OpenAI returned empty choices array".to_string(),
+                    status_code: None,
+                    error_type: ApiErrorType::Other,
+                }));
             }
-            
+
             Ok(choices
                 .first()
                 .map(|c| c.message.content.clone())
                 .unwrap_or_else(|| "No response from ChatGPT".to_string()))
         })
         .await
+    }
+
+    fn supports_conversations(&self) -> bool {
+        true
+    }
+
+    fn supports_streaming(&self) -> bool {
+        true
     }
 
     fn name(&self) -> &str {

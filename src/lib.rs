@@ -11,12 +11,12 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let config = ClientConfig {
-//!         timeout: Duration::from_secs(30),
-//!         retries: 3,
-//!         temperature: Some(0.7),
-//!         max_tokens: Some(1024),
-//!     };
+//!     let config = ClientConfig::builder()
+//!         .timeout(Duration::from_secs(30))
+//!         .retries(3)
+//!         .temperature(0.7)
+//!         .max_tokens(1024)
+//!         .build();
 //!     
 //!     let client = create_client("openai", "your-api-key", "gpt-4o", config)?;
 //!     let response = client.send_prompt("Hello, world!").await?;
@@ -27,6 +27,7 @@
 //! ```
 
 use async_trait::async_trait;
+use futures::stream::BoxStream;
 use reqwest::Client;
 use std::time::Duration;
 
@@ -47,8 +48,16 @@ pub struct ClientConfig {
     pub retries: u32,
     /// Temperature for AI responses (0.0-2.0)
     pub temperature: Option<f32>,
-    /// Maximum tokens for responses (Claude only)
+    /// Maximum tokens for responses
     pub max_tokens: Option<u32>,
+    /// Top-p sampling parameter (0.0-1.0)
+    pub top_p: Option<f32>,
+    /// Frequency penalty (-2.0 to 2.0)
+    pub frequency_penalty: Option<f32>,
+    /// Presence penalty (-2.0 to 2.0)
+    pub presence_penalty: Option<f32>,
+    /// System message for conversation context
+    pub system_message: Option<String>,
 }
 
 impl Default for ClientConfig {
@@ -58,8 +67,196 @@ impl Default for ClientConfig {
             retries: 0,
             temperature: None,
             max_tokens: Some(1024),
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            system_message: None,
         }
     }
+}
+
+impl ClientConfig {
+    /// Create a new ClientConfig builder
+    pub fn builder() -> ClientConfigBuilder {
+        ClientConfigBuilder::default()
+    }
+}
+
+/// Builder for ClientConfig
+#[derive(Debug, Default)]
+pub struct ClientConfigBuilder {
+    timeout: Option<Duration>,
+    retries: Option<u32>,
+    temperature: Option<f32>,
+    max_tokens: Option<u32>,
+    top_p: Option<f32>,
+    frequency_penalty: Option<f32>,
+    presence_penalty: Option<f32>,
+    system_message: Option<String>,
+}
+
+impl ClientConfigBuilder {
+    /// Set request timeout
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Set number of retry attempts
+    pub fn retries(mut self, retries: u32) -> Self {
+        self.retries = Some(retries);
+        self
+    }
+
+    /// Set temperature (0.0-2.0)
+    pub fn temperature(mut self, temperature: f32) -> Self {
+        self.temperature = Some(temperature);
+        self
+    }
+
+    /// Set maximum tokens
+    pub fn max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = Some(max_tokens);
+        self
+    }
+
+    /// Set top-p sampling (0.0-1.0)
+    pub fn top_p(mut self, top_p: f32) -> Self {
+        self.top_p = Some(top_p);
+        self
+    }
+
+    /// Set frequency penalty (-2.0 to 2.0)
+    pub fn frequency_penalty(mut self, penalty: f32) -> Self {
+        self.frequency_penalty = Some(penalty);
+        self
+    }
+
+    /// Set presence penalty (-2.0 to 2.0)
+    pub fn presence_penalty(mut self, penalty: f32) -> Self {
+        self.presence_penalty = Some(penalty);
+        self
+    }
+
+    /// Set system message
+    pub fn system_message<S: Into<String>>(mut self, message: S) -> Self {
+        self.system_message = Some(message.into());
+        self
+    }
+
+    /// Build the ClientConfig
+    pub fn build(self) -> ClientConfig {
+        ClientConfig {
+            timeout: self.timeout.unwrap_or(Duration::from_secs(30)),
+            retries: self.retries.unwrap_or(0),
+            temperature: self.temperature,
+            max_tokens: self.max_tokens.or(Some(1024)),
+            top_p: self.top_p,
+            frequency_penalty: self.frequency_penalty,
+            presence_penalty: self.presence_penalty,
+            system_message: self.system_message,
+        }
+    }
+}
+
+/// Represents a single message in a conversation
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Message {
+    /// Role of the message sender ("system", "user", "assistant")
+    pub role: String,
+    /// Content of the message
+    pub content: String,
+}
+
+impl Message {
+    /// Create a new system message
+    pub fn system<S: Into<String>>(content: S) -> Self {
+        Self {
+            role: "system".to_string(),
+            content: content.into(),
+        }
+    }
+
+    /// Create a new user message
+    pub fn user<S: Into<String>>(content: S) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: content.into(),
+        }
+    }
+
+    /// Create a new assistant message
+    pub fn assistant<S: Into<String>>(content: S) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: content.into(),
+        }
+    }
+}
+
+/// Represents a conversation with message history
+#[derive(Debug, Clone, Default)]
+pub struct Conversation {
+    /// Messages in the conversation
+    pub messages: Vec<Message>,
+}
+
+impl Conversation {
+    /// Create a new empty conversation
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a conversation with a system message
+    pub fn with_system<S: Into<String>>(system_message: S) -> Self {
+        Self {
+            messages: vec![Message::system(system_message)],
+        }
+    }
+
+    /// Add a message to the conversation
+    pub fn add_message(&mut self, message: Message) {
+        self.messages.push(message);
+    }
+
+    /// Add a user message to the conversation
+    pub fn add_user<S: Into<String>>(&mut self, content: S) {
+        self.add_message(Message::user(content));
+    }
+
+    /// Add an assistant message to the conversation
+    pub fn add_assistant<S: Into<String>>(&mut self, content: S) {
+        self.add_message(Message::assistant(content));
+    }
+
+    /// Get the last message from the conversation
+    pub fn last_message(&self) -> Option<&Message> {
+        self.messages.last()
+    }
+
+    /// Clear all messages from the conversation
+    pub fn clear(&mut self) {
+        self.messages.clear();
+    }
+
+    /// Get the number of messages in the conversation
+    pub fn len(&self) -> usize {
+        self.messages.len()
+    }
+
+    /// Check if the conversation is empty
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty()
+    }
+}
+
+/// Streaming response chunk
+#[derive(Debug, Clone)]
+pub struct StreamChunk {
+    /// Content of this chunk
+    pub content: String,
+    /// Whether this is the final chunk
+    pub finished: bool,
 }
 
 /// Common trait implemented by all AI clients
@@ -67,6 +264,64 @@ impl Default for ClientConfig {
 pub trait AiClient: Send + Sync {
     /// Sends a prompt and returns the textual response
     async fn send_prompt(&self, prompt: &str) -> Result<String, ClientError>;
+
+    /// Sends a conversation and returns the textual response
+    async fn send_conversation(&self, conversation: &Conversation) -> Result<String, ClientError> {
+        // Default implementation converts conversation to a single prompt
+        let prompt = if conversation.messages.is_empty() {
+            return Err(ClientError::config("Empty conversation", None));
+        } else if conversation.messages.len() == 1 {
+            &conversation.messages[0].content
+        } else {
+            // For clients that don't support conversations, use the last user message
+            conversation
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.as_str())
+                .unwrap_or(&conversation.messages.last().unwrap().content)
+        };
+        self.send_prompt(prompt).await
+    }
+
+    /// Sends a prompt and returns a stream of response chunks
+    async fn stream_prompt(
+        &self,
+        _prompt: &str,
+    ) -> Result<BoxStream<'_, Result<StreamChunk, ClientError>>, ClientError> {
+        // Default implementation falls back to non-streaming
+        let response = self.send_prompt(_prompt).await?;
+        let chunk = StreamChunk {
+            content: response,
+            finished: true,
+        };
+        Ok(Box::pin(futures::stream::once(async { Ok(chunk) })))
+    }
+
+    /// Sends a conversation and returns a stream of response chunks
+    async fn stream_conversation(
+        &self,
+        conversation: &Conversation,
+    ) -> Result<BoxStream<'_, Result<StreamChunk, ClientError>>, ClientError> {
+        // Default implementation falls back to non-streaming conversation
+        let response = self.send_conversation(conversation).await?;
+        let chunk = StreamChunk {
+            content: response,
+            finished: true,
+        };
+        Ok(Box::pin(futures::stream::once(async { Ok(chunk) })))
+    }
+
+    /// Returns whether this client supports streaming
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
+    /// Returns whether this client supports conversation history
+    fn supports_conversations(&self) -> bool {
+        false
+    }
 
     /// Returns the name/identifier of this AI client
     fn name(&self) -> &str;
@@ -103,7 +358,7 @@ pub fn create_client(
     let http_client = Client::builder()
         .timeout(config.timeout)
         .build()
-        .map_err(|e| ClientError::Configuration(format!("Failed to create HTTP client: {e}")))?;
+        .map_err(|e| ClientError::config(format!("Failed to create HTTP client: {e}"), None))?;
 
     match provider.to_lowercase().as_str() {
         "openai" | "gpt" | "chatgpt" => Ok(Box::new(ChatGpt::new(
@@ -124,9 +379,10 @@ pub fn create_client(
             model.to_string(),
             config,
         ))),
-        _ => Err(ClientError::Configuration(format!(
-            "Unknown provider: {provider}. Supported providers: openai, google, anthropic",
-        ))),
+        _ => Err(ClientError::config(
+            format!("Unknown provider: {provider}. Supported providers: openai, google, anthropic"),
+            Some("provider".to_string()),
+        )),
     }
 }
 
@@ -180,6 +436,40 @@ pub async fn execute_parallel(
             let prompt = prompt.to_string();
             async move {
                 let result = client.send_prompt(&prompt).await;
+                (name, result)
+            }
+        })
+        .collect();
+
+    future::join_all(futures).await
+}
+
+/// Execute multiple AI clients in parallel with a conversation and return all results
+///
+/// This function runs all provided clients concurrently using conversation history
+/// and returns the results in the order they complete.
+///
+/// # Arguments
+///
+/// * `clients` - Vector of AI clients to execute
+/// * `conversation` - The conversation to send to all clients
+///
+/// # Returns
+///
+/// A vector of tuples containing the client name and either the response or an error
+pub async fn execute_parallel_conversation(
+    clients: Vec<Box<dyn AiClient>>,
+    conversation: &Conversation,
+) -> Vec<(String, Result<String, ClientError>)> {
+    use futures::future;
+
+    let futures: Vec<_> = clients
+        .iter()
+        .map(|client| {
+            let name = client.name().to_string();
+            let conversation = conversation.clone();
+            async move {
+                let result = client.send_conversation(&conversation).await;
                 (name, result)
             }
         })
@@ -264,6 +554,25 @@ mod tests {
                 .unwrap_or_else(|| Ok("mock response".to_string()))
         }
 
+        async fn send_conversation(
+            &self,
+            _conversation: &Conversation,
+        ) -> Result<String, ClientError> {
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Ok("mock conversation response".to_string()))
+        }
+
+        fn supports_conversations(&self) -> bool {
+            true
+        }
+
+        fn supports_streaming(&self) -> bool {
+            false
+        }
+
         fn name(&self) -> &str {
             &self.name
         }
@@ -314,5 +623,45 @@ mod tests {
         let summary = generate_summary(&client, &responses).await;
         assert!(summary.is_ok());
         assert_eq!(summary.unwrap(), "summary response");
+    }
+
+    #[tokio::test]
+    async fn test_execute_parallel_conversation() {
+        let clients: Vec<Box<dyn AiClient>> = vec![
+            Box::new(MockClient::new(
+                "client1",
+                vec![Ok("conversation response1".to_string())],
+            )),
+            Box::new(MockClient::new(
+                "client2",
+                vec![Ok("conversation response2".to_string())],
+            )),
+        ];
+
+        let mut conversation = Conversation::new();
+        conversation.add_user("Hello");
+        conversation.add_assistant("Hi there!");
+        conversation.add_user("How are you?");
+
+        let results = execute_parallel_conversation(clients, &conversation).await;
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "client1");
+        assert!(results[0].1.is_ok());
+        assert_eq!(results[1].0, "client2");
+        assert!(results[1].1.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_conversation_support() {
+        let client = MockClient::new("test", vec![Ok("conversation test".to_string())]);
+        assert!(client.supports_conversations());
+        assert!(!client.supports_streaming());
+
+        let mut conversation = Conversation::new();
+        conversation.add_user("Test message");
+
+        let result = client.send_conversation(&conversation).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "conversation test");
     }
 }

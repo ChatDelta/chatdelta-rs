@@ -4,13 +4,17 @@
 [![Documentation](https://docs.rs/chatdelta/badge.svg)](https://docs.rs/chatdelta)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A unified Rust library for connecting to multiple AI APIs (OpenAI, Google Gemini, Anthropic Claude) with a common interface. Supports parallel execution, retry logic, and configurable parameters.
+A unified Rust library for connecting to multiple AI APIs (OpenAI, Google Gemini, Anthropic Claude) with a common interface. Supports parallel execution, conversations, streaming, retry logic, and extensive configuration options.
 
 ## Features
 
 - **Unified Interface**: Single trait (`AiClient`) for all AI providers
 - **Multiple Providers**: OpenAI ChatGPT, Google Gemini, Anthropic Claude
+- **Conversation Support**: Multi-turn conversations with message history
+- **Streaming Responses**: Real-time streaming support (where available)
 - **Parallel Execution**: Run multiple AI models concurrently
+- **Builder Pattern**: Fluent configuration with `ClientConfig::builder()`
+- **Advanced Error Handling**: Detailed error types with specific categories
 - **Retry Logic**: Configurable retry attempts with exponential backoff
 - **Async/Await**: Built with tokio for efficient async operations
 - **Type Safety**: Full Rust type safety with comprehensive error handling
@@ -21,7 +25,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-chatdelta = "0.1"
+chatdelta = "0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -35,15 +39,41 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig {
-        timeout: Duration::from_secs(30),
-        retries: 3,
-        temperature: Some(0.7),
-        max_tokens: Some(1024),
-    };
+    let config = ClientConfig::builder()
+        .timeout(Duration::from_secs(30))
+        .retries(3)
+        .temperature(0.7)
+        .max_tokens(1024)
+        .build();
     
-    let client = create_client("openai", "your-api-key", "gpt-4", config)?;
+    let client = create_client("openai", "your-api-key", "gpt-4o", config)?;
     let response = client.send_prompt("Hello, world!").await?;
+    println!("{}", response);
+    
+    Ok(())
+}
+```
+
+### Conversation Example
+
+```rust
+use chatdelta::{AiClient, ClientConfig, Conversation, create_client};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ClientConfig::builder()
+        .system_message("You are a helpful assistant")
+        .temperature(0.7)
+        .build();
+    
+    let client = create_client("anthropic", "your-api-key", "claude-3-5-sonnet-20241022", config)?;
+    
+    let mut conversation = Conversation::new();
+    conversation.add_user("What's the capital of France?");
+    conversation.add_assistant("The capital of France is Paris.");
+    conversation.add_user("What's its population?");
+    
+    let response = client.send_conversation(&conversation).await?;
     println!("{}", response);
     
     Ok(())
@@ -54,15 +84,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use chatdelta::{create_client, execute_parallel, ClientConfig};
-use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::default();
+    let config = ClientConfig::builder()
+        .retries(2)
+        .temperature(0.7)
+        .build();
     
     let clients = vec![
-        create_client("openai", "openai-key", "gpt-4", config.clone())?,
-        create_client("anthropic", "claude-key", "claude-3-sonnet-20240229", config.clone())?,
+        create_client("openai", "openai-key", "gpt-4o", config.clone())?,
+        create_client("anthropic", "claude-key", "claude-3-5-sonnet-20241022", config.clone())?,
         create_client("google", "gemini-key", "gemini-1.5-pro", config)?,
     ];
     
@@ -73,6 +105,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(response) => println!("{}: {}", name, response),
             Err(e) => eprintln!("{} failed: {}", name, e),
         }
+    }
+    
+    Ok(())
+}
+```
+
+### Streaming Responses
+
+```rust
+use chatdelta::{AiClient, ClientConfig, create_client};
+use tokio_stream::StreamExt;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ClientConfig::builder()
+        .temperature(0.8)
+        .build();
+    
+    let client = create_client("openai", "your-api-key", "gpt-4o", config)?;
+    
+    if client.supports_streaming() {
+        let mut stream = client.stream_prompt("Tell me a story").await?;
+        
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(chunk) => {
+                    print!("{}", chunk.content);
+                    if chunk.finished {
+                        println!("\n[Stream finished]");
+                        break;
+                    }
+                }
+                Err(e) => eprintln!("Stream error: {}", e),
+            }
+        }
+    } else {
+        println!("Client doesn't support streaming");
     }
     
     Ok(())
@@ -98,27 +167,84 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Configuration
 
+The `ClientConfig` supports extensive configuration through a builder pattern:
+
 ```rust
 use chatdelta::ClientConfig;
 use std::time::Duration;
 
-let config = ClientConfig {
-    timeout: Duration::from_secs(60),    // Request timeout
-    retries: 3,                          // Number of retry attempts
-    temperature: Some(0.8),              // Response creativity (0.0-2.0)
-    max_tokens: Some(2048),             // Maximum response length (Claude only)
-};
+let config = ClientConfig::builder()
+    .timeout(Duration::from_secs(60))    // Request timeout
+    .retries(3)                          // Number of retry attempts
+    .temperature(0.8)                    // Response creativity (0.0-2.0)
+    .max_tokens(2048)                    // Maximum response length
+    .top_p(0.9)                         // Top-p sampling (0.0-1.0)
+    .frequency_penalty(0.1)              // Frequency penalty (-2.0 to 2.0)
+    .presence_penalty(0.1)               // Presence penalty (-2.0 to 2.0)
+    .system_message("You are a helpful assistant") // System message for conversation context
+    .build();
 ```
+
+### Configuration Options
+
+| Parameter | Description | Default | Supported By |
+|-----------|-------------|---------|--------------|
+| `timeout` | HTTP request timeout | 30 seconds | All |
+| `retries` | Number of retry attempts | 0 | All |
+| `temperature` | Response creativity (0.0-2.0) | None | All |
+| `max_tokens` | Maximum response length | 1024 | All |
+| `top_p` | Top-p sampling (0.0-1.0) | None | OpenAI |
+| `frequency_penalty` | Frequency penalty (-2.0 to 2.0) | None | OpenAI |
+| `presence_penalty` | Presence penalty (-2.0 to 2.0) | None | OpenAI |
+| `system_message` | System message for conversations | None | All |
 
 ## Error Handling
 
-The library provides comprehensive error handling through the `ClientError` enum:
+The library provides comprehensive error handling through the `ClientError` enum with detailed error types:
 
-- `ClientError::Network`: Connection and timeout errors
-- `ClientError::Api`: API-specific errors and rate limits
-- `ClientError::Authentication`: Invalid API keys
-- `ClientError::Configuration`: Invalid parameters
-- `ClientError::Parse`: Response parsing errors
+```rust
+use chatdelta::{ClientError, ApiErrorType, NetworkErrorType};
+
+match result {
+    Err(ClientError::Network(net_err)) => {
+        match net_err.error_type {
+            NetworkErrorType::Timeout => println!("Request timed out"),
+            NetworkErrorType::ConnectionFailed => println!("Connection failed"),
+            _ => println!("Network error: {}", net_err.message),
+        }
+    }
+    Err(ClientError::Api(api_err)) => {
+        match api_err.error_type {
+            ApiErrorType::RateLimit => println!("Rate limit exceeded"),
+            ApiErrorType::QuotaExceeded => println!("API quota exceeded"),
+            ApiErrorType::InvalidModel => println!("Invalid model specified"),
+            _ => println!("API error: {}", api_err.message),
+        }
+    }
+    Err(ClientError::Authentication(auth_err)) => {
+        println!("Authentication failed: {}", auth_err.message);
+    }
+    Err(ClientError::Configuration(config_err)) => {
+        println!("Configuration error: {}", config_err.message);
+    }
+    Err(ClientError::Parse(parse_err)) => {
+        println!("Parse error: {}", parse_err.message);
+    }
+    Err(ClientError::Stream(stream_err)) => {
+        println!("Stream error: {}", stream_err.message);
+    }
+    Ok(response) => println!("Success: {}", response),
+}
+```
+
+### Error Categories
+
+- **Network**: Connection issues, timeouts, DNS resolution failures
+- **API**: Rate limits, quota exceeded, invalid models, server errors
+- **Authentication**: Invalid API keys, expired tokens, insufficient permissions
+- **Configuration**: Invalid parameters, missing required fields
+- **Parse**: JSON parsing errors, missing response fields
+- **Stream**: Streaming-specific errors, connection lost, invalid chunks
 
 ## License
 

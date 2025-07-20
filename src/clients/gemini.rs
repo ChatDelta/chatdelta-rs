@@ -1,6 +1,9 @@
 //! Google Gemini client implementation
 
-use crate::{execute_with_retry, AiClient, ClientConfig, ClientError};
+use crate::{
+    execute_with_retry, AiClient, ApiErrorType, ClientConfig, ClientError, Conversation,
+    Message,
+};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -13,10 +16,8 @@ pub struct Gemini {
     key: String,
     /// Model identifier such as `"gemini-1.5-pro"`
     model: String,
-    /// Optional temperature parameter controlling response creativity
-    temperature: Option<f32>,
-    /// Number of retry attempts on failure
-    retries: u32,
+    /// Configuration for the client
+    config: ClientConfig,
 }
 
 impl Gemini {
@@ -26,8 +27,7 @@ impl Gemini {
             http,
             key,
             model,
-            temperature: config.temperature,
-            retries: config.retries,
+            config,
         }
     }
 }
@@ -35,6 +35,15 @@ impl Gemini {
 #[async_trait]
 impl AiClient for Gemini {
     async fn send_prompt(&self, prompt: &str) -> Result<String, ClientError> {
+        let mut conversation = Conversation::new();
+        if let Some(system_msg) = &self.config.system_message {
+            conversation.add_message(Message::system(system_msg));
+        }
+        conversation.add_user(prompt);
+        self.send_conversation(&conversation).await
+    }
+
+    async fn send_conversation(&self, conversation: &Conversation) -> Result<String, ClientError> {
         #[derive(Serialize)]
         struct Part<'a> {
             text: &'a str,
@@ -69,6 +78,7 @@ impl AiClient for Gemini {
         struct ApiError {
             code: u32,
             message: String,
+            #[allow(dead_code)]
             status: String,
         }
 
@@ -87,11 +97,20 @@ impl AiClient for Gemini {
             text: String,
         }
 
+        // Convert conversation to Gemini format - for now just use the last user message
+        let user_content = conversation
+            .messages
+            .iter()
+            .rev()
+            .find(|msg| msg.role == "user")
+            .map(|msg| msg.content.as_str())
+            .unwrap_or("");
+
         let body = Request {
             contents: vec![Content {
-                parts: vec![Part { text: prompt }],
+                parts: vec![Part { text: user_content }],
             }],
-            generation_config: self.temperature.map(|temp| GenerationConfig {
+            generation_config: self.config.temperature.map(|temp| GenerationConfig {
                 temperature: Some(temp),
             }),
         };
@@ -101,22 +120,33 @@ impl AiClient for Gemini {
             self.model
         );
 
-        execute_with_retry(self.retries, || async {
-            let response = self.http
+        execute_with_retry(self.config.retries, || async {
+            let response = self
+                .http
                 .post(&url)
                 .header("X-goog-api-key", &self.key)
                 .header("Content-Type", "application/json")
                 .json(&body)
                 .send()
                 .await?;
-            
+
             let response_text = response.text().await?;
             let resp: Response = serde_json::from_str(&response_text)?;
-            
+
             if let Some(error) = resp.error {
-                return Ok(format!("Gemini API Error ({}): {}", error.code, error.message));
+                let error_type = match error.code {
+                    429 => ApiErrorType::RateLimit,
+                    403 => ApiErrorType::QuotaExceeded,
+                    400 => ApiErrorType::BadRequest,
+                    _ => ApiErrorType::Other,
+                };
+                return Err(ClientError::Api(crate::ApiError {
+                    message: format!("Gemini API Error ({}): {}", error.code, error.message),
+                    status_code: Some(error.code as u16),
+                    error_type,
+                }));
             }
-            
+
             Ok(resp
                 .candidates
                 .first()
@@ -125,6 +155,14 @@ impl AiClient for Gemini {
                 .unwrap_or_else(|| "No response from Gemini".to_string()))
         })
         .await
+    }
+
+    fn supports_conversations(&self) -> bool {
+        true
+    }
+
+    fn supports_streaming(&self) -> bool {
+        false
     }
 
     fn name(&self) -> &str {
