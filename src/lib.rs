@@ -37,7 +37,7 @@ pub mod utils;
 
 pub use clients::*;
 pub use error::*;
-pub use utils::execute_with_retry;
+pub use utils::{execute_with_retry, RetryStrategy};
 
 /// Configuration for AI clients
 #[derive(Debug, Clone)]
@@ -58,6 +58,10 @@ pub struct ClientConfig {
     pub presence_penalty: Option<f32>,
     /// System message for conversation context
     pub system_message: Option<String>,
+    /// Custom base URL for API endpoint (e.g., for Azure OpenAI, local models, proxies)
+    pub base_url: Option<String>,
+    /// Retry strategy for failed requests
+    pub retry_strategy: RetryStrategy,
 }
 
 impl Default for ClientConfig {
@@ -71,6 +75,8 @@ impl Default for ClientConfig {
             frequency_penalty: None,
             presence_penalty: None,
             system_message: None,
+            base_url: None,
+            retry_strategy: RetryStrategy::default(),
         }
     }
 }
@@ -93,6 +99,8 @@ pub struct ClientConfigBuilder {
     frequency_penalty: Option<f32>,
     presence_penalty: Option<f32>,
     system_message: Option<String>,
+    base_url: Option<String>,
+    retry_strategy: Option<RetryStrategy>,
 }
 
 impl ClientConfigBuilder {
@@ -144,6 +152,18 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Set custom base URL for API endpoint
+    pub fn base_url<S: Into<String>>(mut self, url: S) -> Self {
+        self.base_url = Some(url.into());
+        self
+    }
+
+    /// Set retry strategy
+    pub fn retry_strategy(mut self, strategy: RetryStrategy) -> Self {
+        self.retry_strategy = Some(strategy);
+        self
+    }
+
     /// Build the ClientConfig
     pub fn build(self) -> ClientConfig {
         ClientConfig {
@@ -155,6 +175,8 @@ impl ClientConfigBuilder {
             frequency_penalty: self.frequency_penalty,
             presence_penalty: self.presence_penalty,
             system_message: self.system_message,
+            base_url: self.base_url,
+            retry_strategy: self.retry_strategy.unwrap_or_default(),
         }
     }
 }
@@ -250,6 +272,51 @@ impl Conversation {
     }
 }
 
+/// Response metadata containing additional information from the AI provider
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ResponseMetadata {
+    /// Model version that was actually used (may differ from requested)
+    pub model_used: Option<String>,
+    /// Number of tokens in the prompt
+    pub prompt_tokens: Option<u32>,
+    /// Number of tokens in the completion
+    pub completion_tokens: Option<u32>,
+    /// Total tokens used (prompt + completion)
+    pub total_tokens: Option<u32>,
+    /// Finish reason (e.g., "stop", "length", "content_filter")
+    pub finish_reason: Option<String>,
+    /// Safety ratings or content filter results
+    pub safety_ratings: Option<serde_json::Value>,
+    /// Request ID for debugging
+    pub request_id: Option<String>,
+    /// Time taken to generate response in milliseconds
+    pub latency_ms: Option<u64>,
+}
+
+/// AI response with content and metadata
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AiResponse {
+    /// The actual text content of the response
+    pub content: String,
+    /// Metadata about the response
+    pub metadata: ResponseMetadata,
+}
+
+impl AiResponse {
+    /// Create a new response with just content (no metadata)
+    pub fn new(content: String) -> Self {
+        Self {
+            content,
+            metadata: ResponseMetadata::default(),
+        }
+    }
+
+    /// Create a response with content and metadata
+    pub fn with_metadata(content: String, metadata: ResponseMetadata) -> Self {
+        Self { content, metadata }
+    }
+}
+
 /// Streaming response chunk
 #[derive(Debug, Clone)]
 pub struct StreamChunk {
@@ -257,6 +324,98 @@ pub struct StreamChunk {
     pub content: String,
     /// Whether this is the final chunk
     pub finished: bool,
+    /// Metadata (only populated on final chunk)
+    pub metadata: Option<ResponseMetadata>,
+}
+
+/// A session for managing multi-turn conversations with an AI client
+pub struct ChatSession {
+    /// The AI client to use for this session
+    client: Box<dyn AiClient>,
+    /// The conversation history
+    conversation: Conversation,
+}
+
+impl ChatSession {
+    /// Create a new chat session with the given client
+    pub fn new(client: Box<dyn AiClient>) -> Self {
+        Self {
+            client,
+            conversation: Conversation::new(),
+        }
+    }
+
+    /// Create a new chat session with a system message
+    pub fn with_system_message<S: Into<String>>(client: Box<dyn AiClient>, message: S) -> Self {
+        Self {
+            client,
+            conversation: Conversation::with_system(message),
+        }
+    }
+
+    /// Send a message and get a response
+    pub async fn send<S: Into<String>>(&mut self, message: S) -> Result<String, ClientError> {
+        let user_msg = message.into();
+        self.conversation.add_user(user_msg);
+        
+        let response = self.client.send_conversation(&self.conversation).await?;
+        self.conversation.add_assistant(&response);
+        
+        Ok(response)
+    }
+
+    /// Send a message and get a response with metadata
+    pub async fn send_with_metadata<S: Into<String>>(
+        &mut self,
+        message: S,
+    ) -> Result<AiResponse, ClientError> {
+        let user_msg = message.into();
+        self.conversation.add_user(user_msg);
+        
+        let response = self
+            .client
+            .send_conversation_with_metadata(&self.conversation)
+            .await?;
+        self.conversation.add_assistant(&response.content);
+        
+        Ok(response)
+    }
+
+    /// Stream a response for the given message
+    pub async fn stream<S: Into<String>>(
+        &mut self,
+        message: S,
+    ) -> Result<BoxStream<'_, Result<StreamChunk, ClientError>>, ClientError> {
+        let user_msg = message.into();
+        self.conversation.add_user(user_msg);
+        
+        self.client.stream_conversation(&self.conversation).await
+    }
+
+    /// Add a message to the conversation without sending
+    pub fn add_message(&mut self, message: Message) {
+        self.conversation.add_message(message);
+    }
+
+    /// Get the conversation history
+    pub fn history(&self) -> &Conversation {
+        &self.conversation
+    }
+
+    /// Get a mutable reference to the conversation history
+    pub fn history_mut(&mut self) -> &mut Conversation {
+        &mut self.conversation
+    }
+
+    /// Clear the conversation history
+    pub fn clear(&mut self) {
+        self.conversation.clear();
+    }
+
+    /// Reset the session with a new system message
+    pub fn reset_with_system<S: Into<String>>(&mut self, message: S) {
+        self.conversation = Conversation::with_system(message);
+    }
 }
 
 /// Common trait implemented by all AI clients
@@ -264,6 +423,13 @@ pub struct StreamChunk {
 pub trait AiClient: Send + Sync {
     /// Sends a prompt and returns the textual response
     async fn send_prompt(&self, prompt: &str) -> Result<String, ClientError>;
+
+    /// Sends a prompt and returns response with metadata
+    async fn send_prompt_with_metadata(&self, prompt: &str) -> Result<AiResponse, ClientError> {
+        // Default implementation for backward compatibility
+        let content = self.send_prompt(prompt).await?;
+        Ok(AiResponse::new(content))
+    }
 
     /// Sends a conversation and returns the textual response
     async fn send_conversation(&self, conversation: &Conversation) -> Result<String, ClientError> {
@@ -285,6 +451,16 @@ pub trait AiClient: Send + Sync {
         self.send_prompt(prompt).await
     }
 
+    /// Sends a conversation and returns response with metadata
+    async fn send_conversation_with_metadata(
+        &self,
+        conversation: &Conversation,
+    ) -> Result<AiResponse, ClientError> {
+        // Default implementation for backward compatibility
+        let content = self.send_conversation(conversation).await?;
+        Ok(AiResponse::new(content))
+    }
+
     /// Sends a prompt and returns a stream of response chunks
     async fn stream_prompt(
         &self,
@@ -295,6 +471,7 @@ pub trait AiClient: Send + Sync {
         let chunk = StreamChunk {
             content: response,
             finished: true,
+            metadata: None,
         };
         Ok(Box::pin(futures::stream::once(async { Ok(chunk) })))
     }
@@ -309,6 +486,7 @@ pub trait AiClient: Send + Sync {
         let chunk = StreamChunk {
             content: response,
             finished: true,
+            metadata: None,
         };
         Ok(Box::pin(futures::stream::once(async { Ok(chunk) })))
     }
