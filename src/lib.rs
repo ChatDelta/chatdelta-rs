@@ -34,6 +34,7 @@ use std::time::Duration;
 pub mod clients;
 pub mod error;
 pub mod utils;
+mod sse;
 
 pub use clients::*;
 pub use error::*;

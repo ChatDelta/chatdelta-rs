@@ -1,15 +1,16 @@
 //! OpenAI ChatGPT client implementation
 
 use crate::{
-    execute_with_retry, AiClient, AiResponse, ApiError, ApiErrorType, ClientConfig,
+    execute_with_retry, sse::sse_stream, AiClient, AiResponse, ApiError, ApiErrorType, ClientConfig,
     ClientError, Conversation, Message, ParseError, ParseErrorType, ResponseMetadata,
     StreamChunk,
 };
 use async_trait::async_trait;
-use futures::stream::{self, BoxStream};
+use futures::stream::{BoxStream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+use std::sync::Arc;
 
 /// Client for OpenAI's ChatGPT models
 pub struct ChatGpt {
@@ -274,6 +275,37 @@ impl AiClient for ChatGpt {
             presence_penalty: Option<f32>,
         }
 
+        #[derive(Deserialize, Debug)]
+        struct StreamResponse {
+            choices: Vec<StreamChoice>,
+            #[serde(default)]
+            usage: Option<Usage>,
+            #[serde(default)]
+            model: Option<String>,
+            #[serde(default)]
+            id: Option<String>,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct StreamChoice {
+            delta: Delta,
+            #[serde(default)]
+            finish_reason: Option<String>,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct Delta {
+            #[serde(default)]
+            content: Option<String>,
+        }
+
+        #[derive(Deserialize, Debug)]
+        struct Usage {
+            prompt_tokens: Option<u32>,
+            completion_tokens: Option<u32>,
+            total_tokens: Option<u32>,
+        }
+
         let mut messages = Vec::new();
         
         // Add system message if configured
@@ -318,18 +350,78 @@ impl AiClient for ChatGpt {
             .await?;
 
         if !response.status().is_success() {
-            return Err(response.error_for_status().unwrap_err().into());
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            return Err(ClientError::Api(ApiError {
+                message: format!("OpenAI API error ({}): {}", status, error_text),
+                status_code: Some(status.as_u16()),
+                error_type: ApiErrorType::Other,
+            }));
         }
 
-        // For streaming, OpenAI returns server-sent events
-        // For now, we'll provide a basic implementation that falls back to non-streaming
-        // A full implementation would parse SSE events
-        let content = self.send_conversation(conversation).await?;
-        let chunk = StreamChunk {
-            content,
-            finished: true,
-            metadata: None,
-        };
-        Ok(Box::pin(stream::once(async { Ok(chunk) })))
+        // Parse SSE stream
+        let sse_stream = sse_stream(response);
+        let start_time = Arc::new(std::sync::Mutex::new(Instant::now()));
+        
+        let stream = sse_stream
+            .filter_map(move |event| {
+                let start_time = Arc::clone(&start_time);
+                async move {
+                    match event {
+                        Ok(sse_event) => {
+                            // Skip non-data events
+                            if sse_event.data.trim() == "[DONE]" {
+                                return None;
+                            }
+                            
+                            // Parse the JSON data
+                            match serde_json::from_str::<StreamResponse>(&sse_event.data) {
+                                Ok(response) => {
+                                    if let Some(choice) = response.choices.first() {
+                                        let content = choice.delta.content.clone().unwrap_or_default();
+                                        let finished = choice.finish_reason.is_some();
+                                        
+                                        // Build metadata if this is the final chunk
+                                        let metadata = if finished {
+                                            let latency_ms = start_time.lock().unwrap().elapsed().as_millis() as u64;
+                                            Some(ResponseMetadata {
+                                                model_used: response.model,
+                                                prompt_tokens: response.usage.as_ref().and_then(|u| u.prompt_tokens),
+                                                completion_tokens: response.usage.as_ref().and_then(|u| u.completion_tokens),
+                                                total_tokens: response.usage.as_ref().and_then(|u| u.total_tokens),
+                                                finish_reason: choice.finish_reason.clone(),
+                                                safety_ratings: None,
+                                                request_id: response.id,
+                                                latency_ms: Some(latency_ms),
+                                            })
+                                        } else {
+                                            None
+                                        };
+                                        
+                                        Some(Ok(StreamChunk {
+                                            content,
+                                            finished,
+                                            metadata,
+                                        }))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                Err(e) => {
+                                    // Log parsing error but continue stream
+                                    eprintln!("Failed to parse SSE data: {}, data: {}", e, sse_event.data);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => Some(Err(ClientError::Stream(crate::StreamError {
+                            message: format!("SSE stream error: {}", e),
+                            error_type: crate::StreamErrorType::Other,
+                        }))),
+                    }
+                }
+            });
+
+        Ok(Box::pin(stream))
     }
 }
