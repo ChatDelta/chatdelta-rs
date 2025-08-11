@@ -61,7 +61,9 @@ where
             tokio::time::sleep(Duration::from_millis(1000 * (attempt + 1) as u64)).await;
         }
     }
-    Err(last_error.unwrap())
+    Err(last_error.unwrap_or_else(|| {
+        ClientError::config("No retry attempts were made", None)
+    }))
 }
 
 /// Execute an async operation with a retry strategy.
@@ -95,7 +97,9 @@ where
             tokio::time::sleep(delay).await;
         }
     }
-    Err(last_error.unwrap())
+    Err(last_error.unwrap_or_else(|| {
+        ClientError::config("No retry attempts were made", None)
+    }))
 }
 
 /// Check if an error should trigger a retry
