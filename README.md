@@ -25,7 +25,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-chatdelta = "0.2"
+chatdelta = "0.4"
 tokio = { version = "1", features = ["full"] }
 ```
 
