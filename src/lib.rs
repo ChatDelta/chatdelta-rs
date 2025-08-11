@@ -33,11 +33,15 @@ use std::time::Duration;
 
 pub mod clients;
 pub mod error;
+pub mod http;
+pub mod metrics;
 pub mod utils;
 mod sse;
 
 pub use clients::*;
 pub use error::*;
+pub use http::{HttpConfig, get_provider_client, SHARED_CLIENT};
+pub use metrics::{ClientMetrics, MetricsSnapshot, RequestTimer};
 pub use utils::{execute_with_retry, RetryStrategy};
 
 /// Configuration for AI clients

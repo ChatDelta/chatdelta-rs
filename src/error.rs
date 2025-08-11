@@ -179,13 +179,17 @@ impl std::error::Error for ClientError {}
 impl From<reqwest::Error> for ClientError {
     fn from(err: reqwest::Error) -> Self {
         if err.is_timeout() {
+            let url = err.url().map(|u| u.as_str()).unwrap_or("unknown");
             ClientError::Network(NetworkError {
-                message: "Request timeout".to_string(),
+                message: format!("Request timed out after attempting to reach {}. Consider increasing timeout or checking network connectivity.", url),
                 error_type: NetworkErrorType::Timeout,
             })
         } else if err.is_connect() {
+            let host = err.url()
+                .and_then(|u| u.host_str())
+                .unwrap_or("unknown host");
             ClientError::Network(NetworkError {
-                message: format!("Connection failed: {err}"),
+                message: format!("Failed to connect to {}. Check internet connectivity and DNS resolution.", host),
                 error_type: NetworkErrorType::ConnectionFailed,
             })
         } else if err.status().is_some() {
