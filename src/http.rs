@@ -21,7 +21,7 @@ pub fn create_optimized_client(timeout: Duration) -> Result<Client, reqwest::Err
         .tcp_keepalive(Duration::from_secs(60))
         .http2_adaptive_window(true)
         .use_rustls_tls()
-        .user_agent("chatdelta/0.4.2")
+        .user_agent(format!("chatdelta/{}", env!("CARGO_PKG_VERSION")))
         .build()
 }
 
@@ -85,7 +85,7 @@ impl HttpConfig {
             .pool_max_idle_per_host(self.pool_max_idle_per_host)
             .http2_adaptive_window(self.http2_adaptive_window)
             .use_rustls_tls()
-            .user_agent("chatdelta/0.4.2");
+            .user_agent(format!("chatdelta/{}", env!("CARGO_PKG_VERSION")));
             
         if let Some(keepalive) = self.tcp_keepalive {
             builder = builder.tcp_keepalive(keepalive);

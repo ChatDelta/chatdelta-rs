@@ -35,6 +35,8 @@ pub mod clients;
 pub mod error;
 pub mod http;
 pub mod metrics;
+pub mod orchestration;
+pub mod prompt_optimizer;
 pub mod utils;
 mod sse;
 
@@ -42,6 +44,8 @@ pub use clients::*;
 pub use error::*;
 pub use http::{HttpConfig, get_provider_client, SHARED_CLIENT};
 pub use metrics::{ClientMetrics, MetricsSnapshot, RequestTimer};
+pub use orchestration::{AiOrchestrator, FusedResponse, OrchestrationStrategy, ModelCapabilities};
+pub use prompt_optimizer::{PromptOptimizer, OptimizedPrompt};
 pub use utils::{execute_with_retry, RetryStrategy};
 
 /// Configuration for AI clients
