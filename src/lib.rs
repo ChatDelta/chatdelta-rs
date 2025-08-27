@@ -337,7 +337,24 @@ pub struct StreamChunk {
     pub metadata: Option<ResponseMetadata>,
 }
 
-/// A session for managing multi-turn conversations with an AI client
+/// A session for managing multi-turn conversations with an AI client.
+/// 
+/// Automatically maintains conversation history and handles context management.
+/// 
+/// # Example
+/// 
+/// ```no_run
+/// # use chatdelta::{ChatSession, create_client, ClientConfig};
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let client = create_client("openai", "key", "gpt-4", ClientConfig::default())?;
+/// let mut session = ChatSession::with_system_message(client, "You are a helpful assistant.");
+/// 
+/// let response1 = session.send("What is Rust?").await?;
+/// let response2 = session.send("What are its main features?").await?; // Remembers context
+/// # Ok(())
+/// # }
+/// ```
 pub struct ChatSession {
     /// The AI client to use for this session
     client: Box<dyn AiClient>,
