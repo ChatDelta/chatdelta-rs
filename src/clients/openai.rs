@@ -237,6 +237,30 @@ impl AiClient for ChatGpt {
         let response = self.send_conversation_with_metadata(conversation).await?;
         Ok(response.content)
     }
+    
+    async fn send_prompt_streaming(
+        &self,
+        prompt: &str,
+        tx: tokio::sync::mpsc::UnboundedSender<StreamChunk>,
+    ) -> Result<(), ClientError> {
+        let mut stream = self.stream_prompt(prompt).await?;
+        
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(chunk) => {
+                    if tx.send(chunk).is_err() {
+                        return Err(ClientError::Stream(crate::StreamError {
+                            message: "Stream receiver dropped".into(),
+                            error_type: crate::StreamErrorType::Other,
+                        }));
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        
+        Ok(())
+    }
 
     async fn stream_prompt(
         &self,

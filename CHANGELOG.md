@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2025-08-30
+
+### Added
+- **Channel-based Streaming**: New `send_prompt_streaming` method for simplified streaming
+  - Uses `tokio::sync::mpsc::UnboundedSender` for easy integration
+  - Compatible with all providers (OpenAI and Claude with native streaming, others via fallback)
+  - Simpler API compared to BoxStream approach
+- **Improved Streaming Support**: Enhanced streaming infrastructure
+  - Both OpenAI and Claude now properly implement `send_prompt_streaming`
+  - Consistent streaming behavior across providers
+  - Better error handling for dropped stream receivers
+
+### Changed
+- Updated documentation with channel-based streaming examples
+- Improved README with both streaming approaches (BoxStream and Channel)
+
+### Technical Details
+- Added `send_prompt_streaming` to `AiClient` trait with default implementation
+- OpenAI and Claude clients now bridge their BoxStream implementations to channel-based streaming
+- Maintained backward compatibility with existing streaming methods
+
 ## [0.6.0] - 2025-08-11
 
 ### 🚀 Revolutionary Features

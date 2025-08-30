@@ -25,7 +25,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-chatdelta = "0.4"
+chatdelta = "0.7"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -113,6 +113,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Streaming Responses
 
+Two methods are available for streaming responses:
+
+#### Using BoxStream (Advanced)
+
 ```rust
 use chatdelta::{AiClient, ClientConfig, create_client};
 use tokio_stream::StreamExt;
@@ -142,6 +146,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         println!("Client doesn't support streaming");
+    }
+    
+    Ok(())
+}
+```
+
+#### Using Channel-based Streaming (Simple)
+
+```rust
+use chatdelta::{AiClient, ClientConfig, create_client, StreamChunk};
+use tokio::sync::mpsc;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ClientConfig::builder()
+        .temperature(0.8)
+        .build();
+    
+    let client = create_client("openai", "your-api-key", "gpt-4o", config)?;
+    
+    // Create a channel for receiving stream chunks
+    let (tx, mut rx) = mpsc::unbounded_channel::<StreamChunk>();
+    
+    // Start streaming in a task
+    let client_clone = client.clone();
+    tokio::spawn(async move {
+        if let Err(e) = client_clone.send_prompt_streaming("Tell me a story", tx).await {
+            eprintln!("Streaming error: {}", e);
+        }
+    });
+    
+    // Receive and print chunks
+    while let Some(chunk) = rx.recv().await {
+        print!("{}", chunk.content);
+        if chunk.finished {
+            println!("\n[Stream finished]");
+            break;
+        }
     }
     
     Ok(())

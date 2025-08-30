@@ -30,6 +30,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use reqwest::Client;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 pub mod clients;
 pub mod error;
@@ -475,6 +476,25 @@ pub trait AiClient: Send + Sync {
                 .unwrap_or(&conversation.messages.last().unwrap().content)
         };
         self.send_prompt(prompt).await
+    }
+    
+    /// Sends a prompt and streams the response in chunks
+    async fn send_prompt_streaming(
+        &self,
+        prompt: &str,
+        tx: mpsc::UnboundedSender<StreamChunk>,
+    ) -> Result<(), ClientError> {
+        // Default implementation: send the whole response as one chunk
+        let response = self.send_prompt(prompt).await?;
+        tx.send(StreamChunk {
+            content: response,
+            finished: true,
+            metadata: None,
+        }).map_err(|_| ClientError::Stream(crate::StreamError {
+            message: "Failed to send stream chunk".into(),
+            error_type: crate::StreamErrorType::Other,
+        }))?;
+        Ok(())
     }
 
     /// Sends a conversation and returns response with metadata
