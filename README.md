@@ -18,6 +18,10 @@ A unified Rust library for connecting to multiple AI APIs (OpenAI, Google Gemini
 - **Retry Logic**: Configurable retry attempts with exponential backoff
 - **Async/Await**: Built with tokio for efficient async operations
 - **Type Safety**: Full Rust type safety with comprehensive error handling
+- **Observability**: Built-in metrics collection and tracing support
+- **Middleware System**: Reusable components for retry, validation, and streaming
+- **Feature Flags**: Optional features like orchestration and prompt optimization
+- **Metrics Export**: Prometheus and OpenTelemetry support (optional)
 
 ## Quick Start
 
@@ -25,7 +29,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-chatdelta = "0.7"
+chatdelta = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -206,6 +210,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Provider: `"anthropic"` or `"claude"`
 - Models: `"claude-3-5-sonnet-20241022"`, `"claude-3-haiku-20240307"`, etc.
 - API Key: Anthropic API key
+
+## Feature Flags
+
+Optional features can be enabled in your `Cargo.toml`:
+
+```toml
+[dependencies]
+chatdelta = { version = "0.8", features = ["experimental"] }
+# Or specific features:
+# chatdelta = { version = "0.8", features = ["orchestration", "metrics-export"] }
+```
+
+Available features:
+- `orchestration`: Multi-model orchestration and consensus
+- `prompt-optimization`: Advanced prompt engineering
+- `experimental`: Enables all experimental features
+- `metrics-export`: Prometheus and OpenTelemetry metrics export
 
 ## Configuration
 

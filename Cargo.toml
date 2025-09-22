@@ -1,6 +1,6 @@
 [package]
 name = "chatdelta"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 authors = ["ChatDelta Contributors"]
 description = "A unified Rust library for connecting to multiple AI APIs with streaming, conversations, and parallel execution"
@@ -16,6 +16,13 @@ categories = ["api-bindings", "web-programming::http-client"]
 name = "chatdelta"
 path = "src/lib.rs"
 
+[features]
+default = []
+orchestration = []
+prompt-optimization = []
+experimental = ["orchestration", "prompt-optimization"]
+metrics-export = ["prometheus", "opentelemetry"]
+
 [dependencies]
 reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
@@ -29,3 +36,13 @@ pin-project-lite = "0.2"
 rand = "0.8"
 once_cell = "1.19"
 moka = { version = "0.12", features = ["future"] }
+
+# Optional dependencies for metrics export
+prometheus = { version = "0.13", optional = true }
+opentelemetry = { version = "0.21", optional = true }
+opentelemetry-prometheus = { version = "0.14", optional = true }
+opentelemetry_sdk = { version = "0.21", optional = true }
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

@@ -30,6 +30,7 @@ pub struct NetworkError {
 pub enum NetworkErrorType {
     Timeout,
     ConnectionFailed,
+    ConnectionReset,
     DnsResolution,
     Other,
 }
@@ -81,6 +82,7 @@ pub struct ConfigError {
 pub struct ParseError {
     pub message: String,
     pub error_type: ParseErrorType,
+    pub raw_content: Option<String>,
 }
 
 #[derive(Debug)]
@@ -145,6 +147,7 @@ impl ClientError {
         Self::Parse(ParseError {
             message: message.into(),
             error_type: ParseErrorType::JsonParsing,
+            raw_content: None,
         })
     }
 }
@@ -240,6 +243,7 @@ impl From<serde_json::Error> for ClientError {
         ClientError::Parse(ParseError {
             message: format!("JSON parsing failed: {err}"),
             error_type: ParseErrorType::JsonParsing,
+            raw_content: None,
         })
     }
 }

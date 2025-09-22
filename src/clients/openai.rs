@@ -195,6 +195,7 @@ impl AiClient for ChatGpt {
                 ClientError::Parse(ParseError {
                     message: "OpenAI response missing 'choices' field".to_string(),
                     error_type: ParseErrorType::MissingField,
+                    raw_content: None,
                 })
             })?;
 

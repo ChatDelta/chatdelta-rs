@@ -66,22 +66,29 @@ impl ClientMetrics {
     pub fn get_stats(&self) -> MetricsSnapshot {
         let total = self.requests_total.load(Ordering::Relaxed);
         let cache_total = self.cache_hits.load(Ordering::Relaxed) + self.cache_misses.load(Ordering::Relaxed);
-        
+
         MetricsSnapshot {
             requests_total: total,
             requests_successful: self.requests_successful.load(Ordering::Relaxed),
             requests_failed: self.requests_failed.load(Ordering::Relaxed),
             success_rate: if total > 0 {
-                (self.requests_successful.load(Ordering::Relaxed) as f64 / total as f64) * 100.0
+                self.requests_successful.load(Ordering::Relaxed) as f64 / total as f64
             } else { 0.0 },
             average_latency_ms: if total > 0 {
-                self.total_latency_ms.load(Ordering::Relaxed) / total
-            } else { 0 },
+                Some(self.total_latency_ms.load(Ordering::Relaxed) as f64 / total as f64)
+            } else { None },
             total_tokens_used: self.total_tokens_used.load(Ordering::Relaxed),
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(Ordering::Relaxed),
             cache_hit_rate: if cache_total > 0 {
-                (self.cache_hits.load(Ordering::Relaxed) as f64 / cache_total as f64) * 100.0
+                self.cache_hits.load(Ordering::Relaxed) as f64 / cache_total as f64
             } else { 0.0 },
         }
+    }
+
+    /// Alias for get_stats for backward compatibility
+    pub fn snapshot(&self) -> MetricsSnapshot {
+        self.get_stats()
     }
     
     /// Reset all metrics to zero
@@ -103,21 +110,27 @@ pub struct MetricsSnapshot {
     pub requests_successful: u64,
     pub requests_failed: u64,
     pub success_rate: f64,
-    pub average_latency_ms: u64,
+    pub average_latency_ms: Option<f64>,
     pub total_tokens_used: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
     pub cache_hit_rate: f64,
 }
 
 impl MetricsSnapshot {
     /// Get a human-readable summary of the metrics
     pub fn summary(&self) -> String {
+        let latency_str = self.average_latency_ms
+            .map(|l| format!("{:.0}ms", l))
+            .unwrap_or_else(|| "N/A".to_string());
+
         format!(
-            "Requests: {} (Success: {:.1}%), Avg Latency: {}ms, Tokens: {}, Cache Hit: {:.1}%",
+            "Requests: {} (Success: {:.1}%), Avg Latency: {}, Tokens: {}, Cache Hit: {:.1}%",
             self.requests_total,
-            self.success_rate,
-            self.average_latency_ms,
+            self.success_rate * 100.0,
+            latency_str,
             self.total_tokens_used,
-            self.cache_hit_rate
+            self.cache_hit_rate * 100.0
         )
     }
 }
@@ -163,9 +176,9 @@ mod tests {
         assert_eq!(stats.requests_total, 3);
         assert_eq!(stats.requests_successful, 2);
         assert_eq!(stats.requests_failed, 1);
-        assert_eq!(stats.average_latency_ms, 116); // (100+200+50)/3
+        assert!(stats.average_latency_ms.unwrap() > 116.0 && stats.average_latency_ms.unwrap() < 117.0); // (100+200+50)/3
         assert_eq!(stats.total_tokens_used, 125);
-        assert!(stats.success_rate > 66.0 && stats.success_rate < 67.0);
+        assert!(stats.success_rate > 0.66 && stats.success_rate < 0.67); // 2/3 = 0.666...
     }
     
     #[test]
@@ -177,6 +190,6 @@ mod tests {
         metrics.record_cache_miss();
         
         let stats = metrics.get_stats();
-        assert!(stats.cache_hit_rate > 66.0 && stats.cache_hit_rate < 67.0);
+        assert!(stats.cache_hit_rate > 0.66 && stats.cache_hit_rate < 0.67); // 2/3 = 0.666...
     }
 }

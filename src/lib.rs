@@ -36,18 +36,28 @@ pub mod clients;
 pub mod error;
 pub mod http;
 pub mod metrics;
-pub mod orchestration;
-pub mod prompt_optimizer;
+pub mod middleware;
+pub mod observability;
 pub mod utils;
 mod sse;
+
+#[cfg(feature = "orchestration")]
+pub mod orchestration;
+
+#[cfg(feature = "prompt-optimization")]
+pub mod prompt_optimizer;
 
 pub use clients::*;
 pub use error::*;
 pub use http::{HttpConfig, get_provider_client, SHARED_CLIENT};
 pub use metrics::{ClientMetrics, MetricsSnapshot, RequestTimer};
-pub use orchestration::{AiOrchestrator, FusedResponse, OrchestrationStrategy, ModelCapabilities};
-pub use prompt_optimizer::{PromptOptimizer, OptimizedPrompt};
 pub use utils::{execute_with_retry, RetryStrategy};
+
+#[cfg(feature = "orchestration")]
+pub use orchestration::{AiOrchestrator, FusedResponse, OrchestrationStrategy, ModelCapabilities};
+
+#[cfg(feature = "prompt-optimization")]
+pub use prompt_optimizer::{PromptOptimizer, OptimizedPrompt};
 
 /// Configuration for AI clients
 #[derive(Debug, Clone)]

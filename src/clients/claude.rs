@@ -463,15 +463,11 @@ impl AiClient for Claude {
                                             None
                                         }
                                         StreamEvent::ContentBlockDelta { delta, .. } => {
-                                            if let Some(text) = delta.text {
-                                                Some(Ok(StreamChunk {
+                                            delta.text.map(|text| Ok(StreamChunk {
                                                     content: text,
                                                     finished: false,
                                                     metadata: None,
                                                 }))
-                                            } else {
-                                                None
-                                            }
                                         }
                                         StreamEvent::MessageDelta { delta, usage } => {
                                             if let Some(u) = usage {
