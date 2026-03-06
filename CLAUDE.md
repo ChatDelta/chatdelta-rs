@@ -8,86 +8,67 @@ ChatDelta is a unified Rust library for connecting to multiple AI APIs (OpenAI, 
 
 ## Core Architecture
 
-### Main Components
-- **`src/lib.rs`**: Main library entry point with `AiClient` trait, `ClientConfig` with builder pattern, factory functions, and module exports
-- **`src/clients/`**: Individual AI provider implementations
-  - `openai.rs`: ChatGPT client with streaming support
-  - `gemini.rs`: Google Gemini client implementation
-  - `claude.rs`: Anthropic Claude client with conversation support
-  - `mod.rs`: Module exports and shared types
-- **`src/error.rs`**: Comprehensive error handling with `ClientError` enum covering Network, API, Authentication, Configuration, Parse, and Stream errors
-- **`src/middleware.rs`**: Reusable middleware components for retry logic, request/response processing, and streaming utilities
-- **`src/observability.rs`**: Metrics export (Prometheus, OpenTelemetry) and structured logging with tracing
-- **`src/orchestration.rs`**: [Feature-gated] Advanced multi-model orchestration with response fusion, confidence scoring, and consensus algorithms
-- **`src/prompt_optimizer.rs`**: [Feature-gated] Prompt optimization engine with templates and performance tracking
-- **`src/metrics.rs`**: Performance metrics collection with atomic counters for requests, latency, tokens, and cache hits
-- **`src/http.rs`**: Shared HTTP client configuration and provider-specific client management
-- **`src/utils.rs`**: Utility functions including `execute_with_retry` and `RetryStrategy`
-- **`src/sse.rs`**: Server-sent events handling for streaming responses
+### Key Types (src/lib.rs)
+- **`AiClient` trait**: The core abstraction all provider clients implement. Only `send_prompt`, `name()`, and `model()` are required — all other methods (`send_conversation`, `stream_prompt`, `stream_conversation`, `send_prompt_streaming`, etc.) have default fallback implementations.
+- **`ClientConfig` / `ClientConfigBuilder`**: Configuration via builder pattern. Supports timeout, retries, temperature, max_tokens, top_p, penalties, system_message, base_url, and retry_strategy.
+- **`Conversation` / `Message`**: Multi-turn message history. Messages have roles: "system", "user", "assistant".
+- **`ChatSession`**: High-level wrapper that owns a client and `Conversation`, automatically appending history. Preferred for interactive use.
+- **`AiResponse` / `ResponseMetadata`**: Rich response type with token counts, finish reason, latency, request ID, safety ratings.
+- **`StreamChunk`**: Unit of streaming output — has `content`, `finished` flag, and optional `metadata` on the final chunk.
 
-### Key Features
-- **Streaming Support**: Both BoxStream and channel-based streaming interfaces
-- **Conversation Management**: Multi-turn conversation support with message history via `Conversation` struct
-- **Trait-based design**: All clients implement the `AiClient` trait with methods for prompts, conversations, and streaming
-- **Builder Pattern**: `ClientConfig::builder()` for fluent configuration
-- **Factory pattern**: `create_client()` function creates appropriate client based on provider string
-- **Async/await**: All API calls are async using tokio runtime with full feature set
-- **Retry logic**: Configurable retry attempts with customizable `RetryStrategy`
-- **Parallel execution**: `execute_parallel()` function runs multiple clients concurrently
-- **Caching**: Response caching using moka cache library
-- **Metrics**: Detailed performance tracking with `ClientMetrics` and `RequestTimer`
-- **Middleware System**: `MiddlewareClient` provides common retry/timeout logic across providers
-- **Observability**: Structured logging with tracing and optional metrics export (Prometheus/OpenTelemetry)
-- **Feature Flags**: Optional experimental features (orchestration, prompt-optimization) can be enabled selectively
+### Provider Clients (src/clients/)
+- `ChatGpt` ("openai" | "gpt" | "chatgpt"), `Gemini` ("google" | "gemini"), `Claude` ("anthropic" | "claude")
+- Instantiated via `create_client(provider, api_key, model, config)` factory function
+- All three re-exported from `src/clients/mod.rs`
+
+### Top-level Functions (src/lib.rs)
+- `execute_parallel(clients, prompt)` — runs all clients concurrently, returns `Vec<(name, Result)>`
+- `execute_parallel_conversation(clients, conversation)` — same but with conversation history
+- `generate_summary(client, responses)` — uses one client to summarize responses from multiple models
+
+### Supporting Modules
+- **`src/middleware.rs`**: `MiddlewareClient` with `execute_with_retry` and `RequestMiddleware` trait for provider-specific request/response hooks
+- **`src/utils.rs`**: `RetryStrategy` (exponential backoff config) and standalone `execute_with_retry`
+- **`src/metrics.rs`**: `ClientMetrics` (atomic counters), `RequestTimer`, `MetricsSnapshot`
+- **`src/observability.rs`**: Prometheus/OpenTelemetry export and tracing setup (requires `metrics-export` feature)
+- **`src/http.rs`**: `SHARED_CLIENT` (global reqwest client), `get_provider_client`, `HttpConfig`
+- **`src/sse.rs`**: SSE parsing for streaming responses (private module)
+- **`src/error.rs`**: `ClientError` enum with structured variants: `Network`, `Api`, `Authentication`, `Configuration`, `Parse`, `Stream` — each with typed sub-enums and convenience constructors (`ClientError::timeout`, `::rate_limit`, `::config`, etc.)
+
+### Feature Flags (Cargo.toml)
+- `orchestration` — enables `src/orchestration.rs`: `AiOrchestrator`, `FusedResponse`, `OrchestrationStrategy`, `ModelCapabilities`
+- `prompt-optimization` — enables `src/prompt_optimizer.rs`: `PromptOptimizer`, `OptimizedPrompt`
+- `experimental` — enables both `orchestration` and `prompt-optimization`
+- `metrics-export` — enables Prometheus and OpenTelemetry export via optional dependencies
 
 ## Common Development Commands
 
-### Build and Test
 ```bash
-# Build the project
+# Build
 cargo build
-
-# Run all tests
-cargo test --all
-
-# Run tests with output
-cargo test -- --nocapture
-
-# Run a specific test
-cargo test test_execute_parallel
-
-# Build in release mode
 cargo build --release
-```
 
-### Code Quality
-```bash
-# Run Clippy linter (CI requirement)
+# Test
+cargo test --all
+cargo test test_execute_parallel          # run a specific test
+cargo test -- --nocapture                 # show println! output
+
+# Lint and format (both required by CI)
 cargo clippy -- -D warnings
-
-# Format code
 cargo fmt
+cargo fmt -- --check                      # CI check only
 
-# Check formatting (CI requirement)
-cargo fmt -- --check
-```
-
-### Documentation
-```bash
-# Generate and open documentation
+# Docs
 cargo doc --open
-
-# Generate docs without opening
-cargo doc
 ```
 
 ## CI/CD Pipeline
 
-GitHub Actions workflow (.github/workflows/ci.yml) runs on all PRs and main branch pushes:
-1. Format check: `cargo fmt -- --check`
-2. Clippy linter: `cargo clippy -- -D warnings`
-3. Test suite: `cargo test --all`
+GitHub Actions (`.github/workflows/ci.yml`) runs on all PRs and main branch pushes:
+1. `cargo fmt -- --check`
+2. `cargo clippy -- -D warnings`
+3. `cargo test --all`
 
 ## Testing Strategy
 
-The codebase includes comprehensive unit tests using `MockClient` implementations for testing parallel execution, streaming, conversations, and orchestration without making actual API calls. Tests are located within each module file.
+Unit tests live within each module file. `MockClient` (defined in `src/lib.rs` tests) implements `AiClient` with a `VecDeque` of pre-set responses — use it for testing parallel execution, conversations, and orchestration without real API calls.
