@@ -5,6 +5,51 @@ Each entry describes what you can now wire up, using the actual API names.
 
 ---
 
+## v0.8.0
+
+**`Conversation` is now serializable.** `Conversation` derives
+`serde::Serialize` and `serde::Deserialize` (it previously didn't, even though
+`Message` already did). You can now round-trip a full session to JSON:
+
+```rust
+// save
+let json = serde_json::to_string(session.history())?;
+fs::write("session.json", json)?;
+
+// restore
+let conv: Conversation = serde_json::from_str(&fs::read_to_string("session.json")?)?;
+session.load_history(conv.messages);
+```
+
+Wire up `--save-conversation` and `--load-conversation` flags against this.
+
+**`ChatSession::load_history(messages: Vec<Message>)`** is now available.
+Replaces the awkward `session.history_mut().messages = …` pattern. Use it to
+restore a saved session or inject synthetic context before the first real turn.
+
+**`MockClient` is now publicly exported** behind the `mock` feature flag. Add
+it to your `[dev-dependencies]` to test CLI logic without live API calls:
+
+```toml
+[dev-dependencies]
+chatdelta = { version = "0.8", features = ["mock"] }
+```
+
+```rust
+use chatdelta::mock::MockClient;
+
+let client = MockClient::new("gpt", vec![
+    Ok("opening argument".to_string()),
+    Ok("rebuttal".to_string()),
+]);
+// drive your debate / conversation / orchestration code under test
+```
+
+`MockClient` queues pre-set responses and returns them in order; once
+exhausted it falls back to a default string rather than panicking.
+
+---
+
 ## v0.7.0
 
 **Channel-based streaming.** You can now receive streaming output via an

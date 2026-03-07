@@ -47,6 +47,9 @@ pub mod orchestration;
 #[cfg(feature = "prompt-optimization")]
 pub mod prompt_optimizer;
 
+#[cfg(any(feature = "mock", test))]
+pub mod mock;
+
 pub use clients::*;
 pub use error::*;
 pub use http::{HttpConfig, get_provider_client, SHARED_CLIENT};
@@ -58,6 +61,9 @@ pub use orchestration::{AiOrchestrator, FusedResponse, OrchestrationStrategy, Mo
 
 #[cfg(feature = "prompt-optimization")]
 pub use prompt_optimizer::{PromptOptimizer, OptimizedPrompt};
+
+#[cfg(feature = "mock")]
+pub use mock::MockClient;
 
 /// Configuration for AI clients
 #[derive(Debug, Clone)]
@@ -237,7 +243,7 @@ impl Message {
 }
 
 /// Represents a conversation with message history
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Conversation {
     /// Messages in the conversation
     pub messages: Vec<Message>,
@@ -452,6 +458,24 @@ impl ChatSession {
     /// Reset the session with a new system message
     pub fn reset_with_system<S: Into<String>>(&mut self, message: S) {
         self.conversation = Conversation::with_system(message);
+    }
+
+    /// Replace the conversation history with the provided messages.
+    ///
+    /// Use this to restore a previously saved session:
+    /// ```no_run
+    /// # use chatdelta::{ChatSession, Message, create_client, ClientConfig};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = create_client("openai", "key", "gpt-4o", ClientConfig::default())?;
+    /// # let mut session = ChatSession::new(client);
+    /// let saved: Vec<Message> = serde_json::from_str(&std::fs::read_to_string("session.json")?)?;
+    /// session.load_history(saved);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn load_history(&mut self, messages: Vec<Message>) {
+        self.conversation.messages = messages;
     }
 }
 
@@ -758,63 +782,7 @@ pub async fn generate_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
-
-    // Mock client for testing
-    pub struct MockClient {
-        pub name: String,
-        pub model: String,
-        pub responses: Arc<Mutex<VecDeque<Result<String, ClientError>>>>,
-    }
-
-    impl MockClient {
-        pub fn new(name: &str, responses: Vec<Result<String, ClientError>>) -> Self {
-            Self {
-                name: name.to_string(),
-                model: "mock-model".to_string(),
-                responses: Arc::new(Mutex::new(VecDeque::from(responses))),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl AiClient for MockClient {
-        async fn send_prompt(&self, _prompt: &str) -> Result<String, ClientError> {
-            self.responses
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| Ok("mock response".to_string()))
-        }
-
-        async fn send_conversation(
-            &self,
-            _conversation: &Conversation,
-        ) -> Result<String, ClientError> {
-            self.responses
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| Ok("mock conversation response".to_string()))
-        }
-
-        fn supports_conversations(&self) -> bool {
-            true
-        }
-
-        fn supports_streaming(&self) -> bool {
-            false
-        }
-
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn model(&self) -> &str {
-            &self.model
-        }
-    }
+    use crate::mock::MockClient;
 
     #[test]
     fn test_client_config_default() {
