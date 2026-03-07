@@ -5,34 +5,35 @@ Each entry describes what you can now wire up, using the actual API names.
 
 ---
 
-## v0.8.0
+## v0.8.1
 
-**`Conversation` is now serializable.** `Conversation` derives
-`serde::Serialize` and `serde::Deserialize` (it previously didn't, even though
-`Message` already did). You can now round-trip a full session to JSON:
+**Save and restore sessions.** `Conversation` now derives `Serialize` and
+`Deserialize`. Combined with `ChatSession::load_history`, you can persist and
+resume a session with three lines:
 
 ```rust
-// save
-let json = serde_json::to_string(session.history())?;
-fs::write("session.json", json)?;
+// save on exit
+fs::write(path, serde_json::to_string(session.history())?)?;
 
-// restore
-let conv: Conversation = serde_json::from_str(&fs::read_to_string("session.json")?)?;
-session.load_history(conv.messages);
+// restore on launch
+let messages: Vec<Message> = serde_json::from_str(&fs::read_to_string(path)?)?;
+session.load_history(messages);
 ```
 
-Wire up `--save-conversation` and `--load-conversation` flags against this.
+Wire this up behind `--save-conversation <path>` and `--load-conversation
+<path>`. The `Conversation` JSON is a plain array of `{role, content}` objects
+— human-readable and stable.
 
-**`ChatSession::load_history(messages: Vec<Message>)`** is now available.
-Replaces the awkward `session.history_mut().messages = …` pattern. Use it to
-restore a saved session or inject synthetic context before the first real turn.
+**`ChatSession::load_history(messages: Vec<Message>)`** replaces the previous
+workaround of reaching into `history_mut().messages`. Call it after creating a
+new session to seed it with saved context before the first real turn.
 
-**`MockClient` is now publicly exported** behind the `mock` feature flag. Add
-it to your `[dev-dependencies]` to test CLI logic without live API calls:
+**Test without API keys.** `MockClient` is now publicly exported behind the
+`mock` Cargo feature. Add it to `[dev-dependencies]`:
 
 ```toml
 [dev-dependencies]
-chatdelta = { version = "0.8", features = ["mock"] }
+chatdelta = { version = "0.8.1", features = ["mock"] }
 ```
 
 ```rust
@@ -41,12 +42,13 @@ use chatdelta::mock::MockClient;
 let client = MockClient::new("gpt", vec![
     Ok("opening argument".to_string()),
     Ok("rebuttal".to_string()),
+    Err(ClientError::config("quota exceeded", None)),
 ]);
-// drive your debate / conversation / orchestration code under test
 ```
 
-`MockClient` queues pre-set responses and returns them in order; once
-exhausted it falls back to a default string rather than panicking.
+Responses are returned in queue order; once exhausted it falls back to a
+default string rather than panicking, so tests don't have to perfectly predict
+every call.
 
 ---
 

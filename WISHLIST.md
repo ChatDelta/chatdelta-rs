@@ -1,6 +1,6 @@
 # ChatDelta Crate Wishlist & Implementation Status
 
-*Last Updated: 2026-03-07 — audited against chatdelta-rs source at v0.8.0*
+*Last Updated: 2026-03-07 — synced against chatdelta-rs v0.8.1*
 
 ---
 
@@ -59,70 +59,66 @@
 - **Note:** The CLI `"save"` branch has a stale `// TODO: Use ChatSession::get_history()
   once available` comment. The method exists as `history()` — remove the TODO.
 
+### Conversation serde + ChatSession::load_history() + MockClient — v0.8.1
+- `Conversation` now derives `Serialize`/`Deserialize` — full JSON round-trip for session
+  save/restore
+- `ChatSession::load_history(messages: Vec<Message>)` — clean session restore; replaces
+  reaching into `history_mut().messages`
+- `MockClient` exported as `chatdelta::mock::MockClient` behind `features = ["mock"]`
+- See WHATSNEW.md v0.8.1 for wiring examples
+
 ### ModelCapabilities — v0.6.0 (requires `orchestration` feature)
 - `ModelCapabilities` struct with `supports_streaming`, `max_tokens`, etc.
 - Available on clients via the orchestration layer
 
 ---
 
-## 🔴 Open — Real Gaps Found in Source Audit
+## 🔴 Open — Remaining Gap
 
-### 1. `execute_parallel` has no metadata variant ⭐⭐⭐⭐
-- `execute_parallel(clients, prompt)` calls `send_prompt` internally and returns
-  `Vec<(String, Result<String>)>` — no token counts, no latency, no model info
-- The CLI can get metadata from single-client calls via `send_prompt_with_metadata`,
-  but the parallel path has no equivalent
-- **Ideal API:**
+### `execute_parallel_with_metadata` ⭐⭐⭐⭐
+- **Status:** Not yet implemented
+- **Pain point:** `execute_parallel(clients, prompt)` calls `send_prompt` internally and
+  returns `Vec<(String, Result<String, ClientError>)>`. Token counts, latency, model
+  version, and finish reason are all silently discarded. The CLI has no way to report
+  per-model usage after a parallel run even though individual clients return full
+  `AiResponse` metadata.
+- **Proposed API** (mirrors the existing function, swaps `String` for `AiResponse`):
   ```rust
   pub async fn execute_parallel_with_metadata(
       clients: Vec<Box<dyn AiClient>>,
       prompt: &str,
   ) -> Vec<(String, Result<AiResponse, ClientError>)>
   ```
-- **CLI use case:** `--show-usage` flag that reports per-model token counts after a
-  parallel run
-
-### 2. `Conversation` lacks `Serialize`/`Deserialize` ⭐⭐⭐⭐
-- `Message` derives `serde::Serialize, serde::Deserialize` — but `Conversation` does not
-- `ChatSession::history()` returns `&Conversation`, which cannot be serialized to JSON
-  for saving/resuming sessions
-- This is the actual blocker for `--save-conversation` / `--load-conversation` in the CLI
-- **Fix needed:**
+  `AiResponse` already exists and carries `content: String` plus
+  `metadata: ResponseMetadata` (prompt_tokens, completion_tokens, total_tokens,
+  finish_reason, latency_ms, model_used). No new types needed.
+- **Implementation sketch** (drop-in alongside `execute_parallel`):
   ```rust
-  #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-  pub struct Conversation { ... }
-  ```
-- With that in place the CLI can do:
-  ```rust
-  // save
-  let json = serde_json::to_string(session.history())?;
-  fs::write(path, json)?;
-  // load
-  let conv: Conversation = serde_json::from_str(&fs::read_to_string(path)?)?;
-  session.history_mut().messages = conv.messages;
-  ```
-
-### 3. `MockClient` is not publicly exported ⭐⭐⭐
-- `MockClient` exists in `src/lib.rs` but only inside `#[cfg(test)]` — it is invisible
-  to downstream crates
-- The CLI cannot use it in its own integration tests without live API keys
-- **Fix:** Move `MockClient` out of the test module and export it, ideally gated behind
-  a `testing` or `mock` Cargo feature so it doesn't bloat production builds:
-  ```rust
-  #[cfg(feature = "testing")]
-  pub struct MockClient { ... }
-  ```
-- **CLI use case:** Test debate logic, conversation flow, and error-handling paths
-  without hitting the API
-
-### 4. `ChatSession::load_history()` missing ⭐⭐
-- `history_mut()` lets you swap messages, but it's awkward for the common pattern of
-  restoring a saved session
-- **Ideal API:**
-  ```rust
-  impl ChatSession {
-      pub fn load_history(&mut self, messages: Vec<Message>);
+  pub async fn execute_parallel_with_metadata(
+      clients: Vec<Box<dyn AiClient>>,
+      prompt: &str,
+  ) -> Vec<(String, Result<AiResponse, ClientError>)> {
+      let futures: Vec<_> = clients
+          .iter()
+          .map(|client| {
+              let name = client.name().to_string();
+              let prompt = prompt.to_string();
+              async move {
+                  let result = client.send_prompt_with_metadata(&prompt).await;
+                  (name, result)
+              }
+          })
+          .collect();
+      futures::future::join_all(futures).await
   }
+  ```
+- **CLI wiring:** Swap `execute_parallel` for `execute_parallel_with_metadata` when
+  `--show-usage` is passed. Pull token counts from each `AiResponse::metadata` and
+  print a per-model summary line after results:
+  ```
+  [gpt-4o]     prompt: 42 tok  completion: 318 tok  total: 360 tok
+  [claude]     prompt: 42 tok  completion: 291 tok  total: 333 tok
+  [gemini]     prompt: 38 tok  completion: 274 tok  total: 312 tok
   ```
 
 ---
@@ -150,11 +146,12 @@
 
 1. **ChatSession takes client by value** — the client is moved into the session; there
    is no way to extract or replace it without rebuilding the entire session (present since
-   v0.3.0, still true in v0.8.0)
+   v0.3.0, still true in v0.8.1)
 
 2. **Stale TODO comments in CLI source** — `main.rs` lines ~827 and ~846 still say
-   "once ChatSession::clear() / get_history() is available". Both methods now exist.
-   Those comments should be removed and the code wired up.
+   "once ChatSession::clear() / get_history() is available". Both methods shipped in
+   v0.8.1. Remove the TODOs and wire up `session.clear()` and `session.history()`
+   (now also serializable).
 
 ---
 
