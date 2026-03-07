@@ -5,6 +5,36 @@ Each entry describes what you can now wire up, using the actual API names.
 
 ---
 
+## v0.8.2
+
+**Token counts from parallel runs.** You can now call
+`execute_parallel_with_metadata(clients, prompt)` instead of `execute_parallel`
+to get full `AiResponse` values — including `metadata.prompt_tokens`,
+`completion_tokens`, `total_tokens`, `finish_reason`, and `latency_ms` — from
+every model in one shot. The existing `execute_parallel` is unchanged.
+
+```rust
+use chatdelta::{execute_parallel_with_metadata, AiResponse};
+
+let results = execute_parallel_with_metadata(clients, &prompt).await;
+for (name, result) in results {
+    match result {
+        Ok(r) => {
+            println!("{}", r.content);
+            if let Some(t) = r.metadata.total_tokens {
+                eprintln!("[{}] {} tokens", name, t);
+            }
+        }
+        Err(e) => eprintln!("{} failed: {}", name, e),
+    }
+}
+```
+
+Wire this up behind a `--show-usage` flag: pass it when the flag is set,
+fall back to `execute_parallel` otherwise.
+
+---
+
 ## v0.8.1
 
 **Save and restore sessions.** `Conversation` now derives `Serialize` and

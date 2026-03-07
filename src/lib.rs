@@ -702,6 +702,74 @@ pub async fn execute_parallel(
     future::join_all(futures).await
 }
 
+/// Execute multiple AI clients in parallel and return full responses with metadata
+///
+/// Like [`execute_parallel`] but calls [`AiClient::send_prompt_with_metadata`] on each
+/// client, returning [`AiResponse`] instead of a plain `String`. Each `AiResponse`
+/// carries `content` plus a [`ResponseMetadata`] with token counts, latency, model
+/// version, and finish reason.
+///
+/// Use this when you need per-model token usage (e.g. for a `--show-usage` flag).
+/// The existing [`execute_parallel`] is unchanged for backward compatibility.
+///
+/// # Arguments
+///
+/// * `clients` - Vector of AI clients to execute
+/// * `prompt` - The prompt to send to all clients
+///
+/// # Returns
+///
+/// A vector of tuples containing the client name and either the full response or an error
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use chatdelta::{create_client, execute_parallel_with_metadata, ClientConfig};
+///
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = ClientConfig::default();
+/// let clients = vec![
+///     create_client("openai", "key1", "gpt-4o", config.clone())?,
+///     create_client("anthropic", "key2", "claude-sonnet-4-6", config)?,
+/// ];
+///
+/// let results = execute_parallel_with_metadata(clients, "Hello, world!").await;
+/// for (name, result) in results {
+///     match result {
+///         Ok(r) => println!(
+///             "{}: {} tokens — {}",
+///             name,
+///             r.metadata.total_tokens.unwrap_or(0),
+///             r.content,
+///         ),
+///         Err(e) => eprintln!("{} failed: {}", name, e),
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub async fn execute_parallel_with_metadata(
+    clients: Vec<Box<dyn AiClient>>,
+    prompt: &str,
+) -> Vec<(String, Result<AiResponse, ClientError>)> {
+    use futures::future;
+
+    let futures: Vec<_> = clients
+        .iter()
+        .map(|client| {
+            let name = client.name().to_string();
+            let prompt = prompt.to_string();
+            async move {
+                let result = client.send_prompt_with_metadata(&prompt).await;
+                (name, result)
+            }
+        })
+        .collect();
+
+    future::join_all(futures).await
+}
+
 /// Execute multiple AI clients in parallel with a conversation and return all results
 ///
 /// This function runs all provided clients concurrently using conversation history

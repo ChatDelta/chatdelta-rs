@@ -1,6 +1,6 @@
 [package]
 name = "chatdelta"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2021"
 authors = ["ChatDelta Contributors"]
 description = "A unified Rust library for connecting to multiple AI APIs with streaming, conversations, and parallel execution"

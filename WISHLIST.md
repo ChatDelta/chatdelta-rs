@@ -1,6 +1,6 @@
 # ChatDelta Crate Wishlist & Implementation Status
 
-*Last Updated: 2026-03-07 — synced against chatdelta-rs v0.8.1*
+*Last Updated: 2026-03-07 — synced against chatdelta-rs v0.8.2*
 
 ---
 
@@ -59,6 +59,13 @@
 - **Note:** The CLI `"save"` branch has a stale `// TODO: Use ChatSession::get_history()
   once available` comment. The method exists as `history()` — remove the TODO.
 
+### execute_parallel_with_metadata — v0.8.2
+- `execute_parallel_with_metadata(clients, prompt) -> Vec<(String, Result<AiResponse, ClientError>)>`
+- Each client calls `send_prompt_with_metadata` internally; returns full token counts,
+  latency, model version, and finish reason alongside content
+- `execute_parallel` unchanged — backward compatible
+- **CLI wiring:** use behind `--show-usage`; see WHATSNEW.md v0.8.2 for example
+
 ### Conversation serde + ChatSession::load_history() + MockClient — v0.8.1
 - `Conversation` now derives `Serialize`/`Deserialize` — full JSON round-trip for session
   save/restore
@@ -73,53 +80,10 @@
 
 ---
 
-## 🔴 Open — Remaining Gap
+## ✅ All Tracked Items Delivered
 
-### `execute_parallel_with_metadata` ⭐⭐⭐⭐
-- **Status:** Not yet implemented
-- **Pain point:** `execute_parallel(clients, prompt)` calls `send_prompt` internally and
-  returns `Vec<(String, Result<String, ClientError>)>`. Token counts, latency, model
-  version, and finish reason are all silently discarded. The CLI has no way to report
-  per-model usage after a parallel run even though individual clients return full
-  `AiResponse` metadata.
-- **Proposed API** (mirrors the existing function, swaps `String` for `AiResponse`):
-  ```rust
-  pub async fn execute_parallel_with_metadata(
-      clients: Vec<Box<dyn AiClient>>,
-      prompt: &str,
-  ) -> Vec<(String, Result<AiResponse, ClientError>)>
-  ```
-  `AiResponse` already exists and carries `content: String` plus
-  `metadata: ResponseMetadata` (prompt_tokens, completion_tokens, total_tokens,
-  finish_reason, latency_ms, model_used). No new types needed.
-- **Implementation sketch** (drop-in alongside `execute_parallel`):
-  ```rust
-  pub async fn execute_parallel_with_metadata(
-      clients: Vec<Box<dyn AiClient>>,
-      prompt: &str,
-  ) -> Vec<(String, Result<AiResponse, ClientError>)> {
-      let futures: Vec<_> = clients
-          .iter()
-          .map(|client| {
-              let name = client.name().to_string();
-              let prompt = prompt.to_string();
-              async move {
-                  let result = client.send_prompt_with_metadata(&prompt).await;
-                  (name, result)
-              }
-          })
-          .collect();
-      futures::future::join_all(futures).await
-  }
-  ```
-- **CLI wiring:** Swap `execute_parallel` for `execute_parallel_with_metadata` when
-  `--show-usage` is passed. Pull token counts from each `AiResponse::metadata` and
-  print a per-model summary line after results:
-  ```
-  [gpt-4o]     prompt: 42 tok  completion: 318 tok  total: 360 tok
-  [claude]     prompt: 42 tok  completion: 291 tok  total: 333 tok
-  [gemini]     prompt: 38 tok  completion: 274 tok  total: 312 tok
-  ```
+All open wishes through v0.8.2 have been implemented. See the relevant sections
+above and WHATSNEW.md for wiring guidance.
 
 ---
 
